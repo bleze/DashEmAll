@@ -920,6 +920,27 @@ button {
   margin-top: 8px;
 }
 
+.field-hint {
+  margin: 0 0 8px;
+  color: var(--faint);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.backup-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
 .error-banner {
   margin-bottom: 16px;
   padding: 10px 14px;

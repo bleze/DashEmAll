@@ -220,8 +220,7 @@ function saveJson(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
 }
 
-function loadHoldings() {
-  const parsed = loadJson(HOLDINGS_KEY);
+function sanitizeHoldings(parsed) {
   if (!Array.isArray(parsed)) return [];
   return parsed
     .filter((h) => h && typeof h.symbol === "string")
@@ -233,6 +232,10 @@ function loadHoldings() {
       costBasis: h.costBasis == null ? null : Number(h.costBasis),
       tag: h.tag ? String(h.tag).trim() : "",
     }));
+}
+
+function loadHoldings() {
+  return sanitizeHoldings(loadJson(HOLDINGS_KEY));
 }
 
 function persist() {
@@ -248,8 +251,8 @@ function persistCache() {
   });
 }
 
-function loadSettings() {
-  const saved = loadJson(SETTINGS_KEY) || {};
+function sanitizeSettings(saved) {
+  saved = saved || {};
   return {
     localCurrency: CURRENCY_OPTIONS.some((c) => c.code === saved.localCurrency)
       ? saved.localCurrency
@@ -261,6 +264,10 @@ function loadSettings() {
       ? saved.timezone
       : DEFAULT_SETTINGS.timezone,
   };
+}
+
+function loadSettings() {
+  return sanitizeSettings(loadJson(SETTINGS_KEY));
 }
 
 function persistSettings() {
@@ -851,6 +858,56 @@ function recordHistory(usd) {
   saveJson(HISTORY_KEY, state.history);
 }
 
+function sanitizeHistory(parsed) {
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((p) => p && typeof p.ts === "number" && typeof p.usd === "number")
+    .sort((a, b) => a.ts - b.ts);
+}
+
+// localStorage is scoped per-origin, so holdings added on file:// (local
+// testing) or one deployed URL don't show up on another - export/import is
+// the way to carry them across, and doubles as a manual backup.
+function exportData() {
+  const payload = {
+    exportedAt: Date.now(),
+    holdings: state.holdings,
+    settings: state.settings,
+    history: state.history,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `dashemall-export-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importDataFromFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    let data;
+    try {
+      data = JSON.parse(reader.result);
+    } catch {
+      alert("That file isn't valid JSON.");
+      return;
+    }
+    state.holdings = sanitizeHoldings(data.holdings);
+    state.settings = sanitizeSettings(data.settings);
+    state.history = sanitizeHistory(data.history);
+    persist();
+    persistSettings();
+    saveJson(HISTORY_KEY, state.history);
+    closeModal();
+    refreshQuotes();
+    refreshNews();
+    refreshSparklines();
+  };
+  reader.readAsText(file);
+}
+
 function wireHeadlines() {
   const seen = new Set();
   const items = [];
@@ -1025,6 +1082,15 @@ function renderSettingsModal() {
           <select data-field="timezone">
             ${TIMEZONE_OPTIONS.map((o) => option(o, s.timezone)).join("")}
           </select>
+        </div>
+        <div class="field">
+          <label>Backup / transfer</label>
+          <p class="field-hint">Holdings live in this browser only. Export a file here, then import it on another browser or another URL (e.g. moving from a local file to the hosted version) to carry them over.</p>
+          <div class="backup-actions">
+            <button type="button" class="btn btn-ghost" data-action="export">Export data</button>
+            <button type="button" class="btn btn-ghost" data-action="import-trigger">Import data</button>
+            <input type="file" data-field="import-file" accept="application/json" class="visually-hidden">
+          </div>
         </div>
         <div class="dialog-actions">
           <button type="button" class="btn btn-primary" data-action="close">Done</button>
@@ -1494,6 +1560,8 @@ root.addEventListener("click", (event) => {
     const action = actionEl.dataset.action;
     if (action === "close") closeModal();
     if (action === "remove") removeCurrent();
+    if (action === "export") exportData();
+    if (action === "import-trigger") root.querySelector('[data-field="import-file"]')?.click();
     if (action === "pick") {
       state.selectedSymbol = actionEl.dataset.symbol || "";
       state.selectedName = actionEl.dataset.name || "";
@@ -1544,6 +1612,11 @@ root.addEventListener("input", (event) => {
 
 root.addEventListener("change", (event) => {
   const field = event.target.dataset.field;
+  if (field === "import-file") {
+    const file = event.target.files?.[0];
+    if (file) importDataFromFile(file);
+    return;
+  }
   if (field !== "localCurrency" && field !== "timeFormat" && field !== "timezone") return;
   state.settings[field] = event.target.value;
   persistSettings();

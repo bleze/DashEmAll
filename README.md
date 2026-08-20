@@ -21,7 +21,7 @@ npx serve .
 - Each holding card has a faded 30-day price sparkline behind its content, colored by the day's direction — same treatment as the total-value trend line, just per-symbol. Fetched on its own slow cadence (every 6 hours, plus once when a holding is first added), separate from the 30-second price refresh — see below for why.
 - Settings (gear button, top right) let you pick a local currency shown alongside USD (DKK/EUR/GBP/SEK/NOK/USD), a 12/24-hour clock, and a timezone to display the clock/date in — all independent of USD, which is always the base currency everything is computed in.
 - A scrolling "Wire" headline ticker plus a couple of headlines per holding, sourced from Yahoo Finance's news search first, with Google News RSS and a filtered Hacker News search as fallbacks.
-- Everything persists to `localStorage`; no accounts, no sync, no server-side storage.
+- Everything persists to `localStorage`; no accounts, no sync, no server-side storage. Since `localStorage` is scoped per browser origin, holdings added on `file://` won't show up on a hosted URL (or vice versa) — use Export/Import in Settings to carry data across origins or as a manual backup.
 
 ## How it's built
 
