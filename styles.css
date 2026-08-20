@@ -504,6 +504,21 @@ button {
   font-size: 13px;
 }
 
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* .btn:disabled's opacity dims brass to a washed-out gold, not obviously
+   "off" - swap to a plain grey instead of just fading the brand color. */
+.btn-primary:disabled {
+  background: var(--card-2);
+  border-color: var(--line-strong);
+  color: rgba(91, 101, 114, 0.55);
+  opacity: 1;
+}
+
 .btn:hover {
   border-color: var(--brass);
 }
@@ -532,6 +547,37 @@ button {
 .btn-danger {
   color: var(--down);
   border-color: rgba(255, 122, 114, 0.35);
+}
+
+.tag-breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 14px 18px 0;
+}
+
+.tag-filter-chip {
+  /* color/border-color/background come from tagColor() inline, same
+     deterministic per-tag palette used for the on-card tag badge. */
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid;
+  border-radius: 999px;
+  padding: 6px 6px 6px 12px;
+  font-size: 12px;
+}
+
+.tag-filter-name {
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tag-filter-value {
+  font-family: var(--money);
+  font-variant-numeric: tabular-nums lining-nums;
+  border-radius: 999px;
+  padding: 3px 9px;
 }
 
 .alloc-row {
@@ -627,6 +673,18 @@ button {
   gap: 12px;
 }
 
+.holding-ident-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.sym-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .swatch {
   width: 9px;
   height: 34px;
@@ -640,18 +698,30 @@ button {
 }
 
 .tag-chip {
+  /* color/border-color/background come from tagColor() inline - deterministic
+     per tag text, so the same tag looks the same everywhere it appears. */
   display: inline-flex;
   align-items: center;
-  border: 1px solid rgba(126, 200, 201, 0.35);
+  border: 1px solid;
   border-radius: 999px;
   padding: 1px 8px;
   font-family: var(--sans);
   font-size: 10px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--wire);
-  background: var(--wire-dim);
   vertical-align: middle;
+}
+
+.tag-chip-btn {
+  cursor: pointer;
+  padding: 4px 10px;
+}
+
+/* An inset ring in the chip's own already-set color, not a filter/box-shadow
+   glow - those forced a different text-compositing path elsewhere and made
+   label text look smeared. This only adds a crisp border, nothing blurred. */
+.tag-chip-btn:hover {
+  box-shadow: inset 0 0 0 1px currentColor;
 }
 
 .name {
@@ -682,6 +752,19 @@ button {
   font-family: var(--money);
   font-size: 13px;
   font-variant-numeric: tabular-nums lining-nums;
+}
+
+.num.up,
+.name.up {
+  color: var(--up);
+}
+.num.down,
+.name.down {
+  color: var(--down);
+}
+.num.flat,
+.name.flat {
+  color: var(--muted);
 }
 
 .pill {
@@ -820,6 +903,13 @@ button {
   color: var(--brass);
 }
 
+.tag-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
 .dialog-backdrop {
   position: fixed;
   inset: 0;
@@ -879,14 +969,28 @@ button {
   border-color: var(--brass);
 }
 
+.field-combo {
+  position: relative;
+}
+
 .search-list {
+  /* Floats over the fields below instead of pushing them down - previously
+     an in-flow block, which made the dialog jump to a much taller height
+     the moment results appeared. */
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 5;
   list-style: none;
-  margin: 0 0 12px;
+  margin: 4px 0 0;
   padding: 0;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
+  background: var(--bg);
+  box-shadow: var(--shadow);
   /* Fixed (not max) height: local results render first and live results
      merge in a moment later with a different count - a fixed box means
-     that never resizes the dialog, only scrolls internally. */
+     that never resizes the dropdown, only scrolls internally. */
   height: 220px;
   overflow-y: auto;
 }

@@ -203,6 +203,7 @@ const state = {
   quantity: "1",
   costBasis: "",
   tag: "",
+  tagFilter: new Set(),
   now: Date.now(),
 };
 
@@ -318,6 +319,11 @@ function formatSignedUsd(n) {
   return `${sign}${usdFmt.format(Math.abs(n))}`;
 }
 
+function formatSignedLocal(n) {
+  const sign = n > 0 ? "+" : n < 0 ? "−" : "";
+  return `${sign}${formatLocal(Math.abs(n))}`;
+}
+
 function formatPrice(n, currency) {
   try {
     return new Intl.NumberFormat("en-US", {
@@ -375,6 +381,24 @@ function colorFor(symbol, index) {
   if (symbol === "BTC-USD") return "#f0b429";
   if (symbol === "ETH-USD") return "#7aa2ff";
   return HOLDING_COLORS[index % HOLDING_COLORS.length];
+}
+
+// Deterministic per-tag color: same tag text always maps to the same hue,
+// so "Cold storage" looks the same everywhere it appears without needing a
+// fixed palette or manual color picking. Saturation/lightness are pinned to
+// values that read well against the dark card background at any hue.
+function tagColor(tag) {
+  let hash = 0;
+  for (let i = 0; i < tag.length; i++) {
+    hash = (hash * 31 + tag.charCodeAt(i)) | 0;
+  }
+  const hue = Math.abs(hash) % 360;
+  return {
+    text: `hsl(${hue}, 55%, 70%)`,
+    border: `hsla(${hue}, 55%, 70%, 0.4)`,
+    bg: `hsla(${hue}, 55%, 70%, 0.14)`,
+    bgActive: `hsla(${hue}, 55%, 70%, 0.28)`,
+  };
 }
 
 function isCrypto(quote, symbol) {
@@ -842,6 +866,29 @@ function totals() {
   return { usd, local: toLocal(usd, state.fx), changeUsd, changePct, btcUsd, stocksUsd, rows };
 }
 
+function tagBreakdown(rows) {
+  const map = new Map();
+  for (const row of rows) {
+    const tag = row.holding.tag || "Untagged";
+    const entry = map.get(tag) || { tag, valueUsd: 0, count: 0 };
+    entry.valueUsd += row.valueUsd;
+    entry.count += 1;
+    map.set(tag, entry);
+  }
+  const groups = [...map.values()];
+  // "Untagged" always sits last regardless of its value - it's a catch-all,
+  // not a deliberate category, so it shouldn't jostle for position among
+  // tags the user actually chose.
+  const tagged = groups.filter((g) => g.tag !== "Untagged").sort((a, b) => b.valueUsd - a.valueUsd);
+  const untagged = groups.filter((g) => g.tag === "Untagged");
+  return [...tagged, ...untagged];
+}
+
+function visibleRows(rows) {
+  if (!state.tagFilter.size) return rows;
+  return rows.filter((row) => state.tagFilter.has(row.holding.tag || "Untagged"));
+}
+
 // One point per calendar day: repeated refreshes within the same day update
 // that day's point in place (so it always reflects the latest known value)
 // instead of piling up dozens of points from a page left open all day.
@@ -1005,8 +1052,18 @@ function renderHolding(row, allocTotal, hasCost) {
         ${renderHoldingSpark(state.sparklines[row.holding.symbol], dir)}
         <div class="holding-ident">
           <span class="swatch" style="background:${row.color}"></span>
-          <div>
-            <div class="sym">${esc(row.holding.symbol)}${row.holding.tag ? ` <span class="tag-chip">${esc(row.holding.tag)}</span>` : ""}</div>
+          <div class="holding-ident-info">
+            <div class="sym-row">
+              <div class="sym">${esc(row.holding.symbol)}${
+                row.holding.tag
+                  ? (() => {
+                      const c = tagColor(row.holding.tag);
+                      return ` <span class="tag-chip" style="color:${c.text};border-color:${c.border};background:${c.bg}">${esc(row.holding.tag)}</span>`;
+                    })()
+                  : ""
+              }</div>
+              ${q ? `<span class="pill ${signClass(row.dayUsd)}">${esc(formatPct(q.changePercent))}</span>` : ""}
+            </div>
             <div class="name">${esc(q?.name || row.holding.name)}${missing ? " · waiting" : stale ? ` · <span class="stale-flag" title="No successful price update in over ${Math.round(STALE_MS / 60000)} minutes">stale · ${esc(relativeAgo(q.fetchedAt, state.now))}</span>` : ""}</div>
           </div>
         </div>
@@ -1021,18 +1078,22 @@ function renderHolding(row, allocTotal, hasCost) {
             ${convertedPrice ? `<div class="name">${esc(convertedPrice)}</div>` : ""}
           </div>
           <div>
-            <div class="metric-label">USD / ${esc(localCode)}</div>
+            <div class="metric-label">USD / ${esc(localCode)} · ${(pct * 100).toFixed(1)}%</div>
             <div class="num">${esc(formatUsd(row.valueUsd))}</div>
             ${localCode !== "USD" ? `<div class="name">${esc(formatLocal(toLocal(row.valueUsd, state.fx)))}</div>` : ""}
           </div>
           <div>
-            <div class="metric-label">Today · ${(pct * 100).toFixed(1)}%</div>
-            <div>${q ? `<span class="pill ${signClass(row.dayUsd)}">${esc(formatPct(q.changePercent))}</span>` : "—"}</div>
+            <div class="metric-label">Profit/Loss</div>
             ${
               hasCost
-                ? `<div class="name ${row.pnlUsd == null ? "" : signClass(row.pnlUsd)}">${
+                ? `<div class="num ${row.pnlUsd == null ? "" : signClass(row.pnlUsd)}">${
                     row.pnlUsd == null ? "—" : esc(formatSignedUsd(row.pnlUsd))
-                  }</div>`
+                  }</div>
+                  ${
+                    row.pnlUsd != null && localCode !== "USD"
+                      ? `<div class="name ${signClass(row.pnlUsd)}">${esc(formatSignedLocal(toLocal(row.pnlUsd, state.fx)))}</div>`
+                      : ""
+                  }`
                 : ""
             }
           </div>
@@ -1100,10 +1161,31 @@ function renderSettingsModal() {
   `;
 }
 
+function renderRemoveConfirm(holding) {
+  return `
+    <div class="dialog-backdrop">
+      <div class="dialog">
+        <h3>Remove ${esc(holding.symbol)}?</h3>
+        <p>This deletes ${esc(formatQty(holding.quantity))} ${esc(holding.symbol)}${holding.tag ? ` (${esc(holding.tag)})` : ""} from your ledger, including its cost basis. This can't be undone here — re-add it manually, or restore from an exported backup.</p>
+        <div class="dialog-actions">
+          <button type="button" class="btn btn-ghost" data-action="cancel-remove">Cancel</button>
+          <button type="button" class="btn btn-danger" data-action="confirm-remove">Remove holding</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderHoldingModal() {
   const editing = state.modal.kind === "edit";
   const current =
     editing ? state.holdings.find((h) => h.id === state.modal.id) : null;
+  if (editing && state.modal.confirmRemove && current) return renderRemoveConfirm(current);
+  const knownTags = [...new Set(state.holdings.map((h) => h.tag).filter(Boolean))].sort();
+  const symbol = (state.selectedSymbol || state.searchQ).trim();
+  const qty = parseQty(state.quantity);
+  const validQty = !Number.isNaN(qty) && qty !== 0;
+  const canSubmit = editing ? validQty : symbol !== "" && validQty;
   return `
     <div class="dialog-backdrop">
       <form class="dialog" data-action="${editing ? "save-edit" : "save-add"}">
@@ -1112,29 +1194,31 @@ function renderHoldingModal() {
         ${
           editing
             ? `<div class="field"><label>Symbol</label><input value="${esc(current?.symbol || "")}" disabled></div>`
-            : `<div class="field">
+            : `<div class="field field-combo">
                 <label>Search ticker</label>
                 <input data-field="search" value="${esc(state.searchQ)}" placeholder="AAPL, BTC-USD, NOVO-B.CO" autocomplete="off">
-              </div>
-              ${
-                state.searchResults.length
-                  ? `<ul class="search-list">${state.searchResults
-                      .map(
-                        (r) => `<li><button type="button" data-action="pick" data-symbol="${esc(r.symbol)}" data-name="${esc(r.name)}" class="${r.symbol === state.selectedSymbol ? "active" : ""}">
-                          <span><strong>${esc(r.symbol)}</strong><div class="search-meta">${esc(r.name)}</div></span>
-                          <span class="search-meta">${esc(r.exchange || r.type)}</span>
-                        </button></li>`,
-                      )
-                      .join("")}</ul>`
-                  : ""
-              }`
+                ${
+                  state.searchResults.length
+                    ? `<ul class="search-list">${state.searchResults
+                        .map(
+                          (r) => `<li><button type="button" data-action="pick" data-symbol="${esc(r.symbol)}" data-name="${esc(r.name)}" class="${r.symbol === state.selectedSymbol ? "active" : ""}">
+                            <span><strong>${esc(r.symbol)}</strong><div class="search-meta">${esc(r.name)}</div></span>
+                            <span class="search-meta">${esc(r.exchange || r.type)}</span>
+                          </button></li>`,
+                        )
+                        .join("")}</ul>`
+                    : ""
+                }
+              </div>`
         }
-        ${
-          state.selectedSymbol || current
-            ? `<div class="field"><label>Selected</label>
-                <input value="${esc(state.selectedSymbol || current?.symbol || "")} · ${esc(state.selectedName || current?.name || "")}" disabled></div>`
-            : ""
-        }
+        <div class="field">
+          <label>Selected</label>
+          <input value="${
+            state.selectedSymbol || current
+              ? `${esc(state.selectedSymbol || current?.symbol || "")} · ${esc(state.selectedName || current?.name || "")}`
+              : ""
+          }" placeholder="Pick a ticker above" disabled>
+        </div>
         <div class="field">
           <label>Quantity</label>
           <input data-field="quantity" value="${esc(state.quantity)}" inputmode="decimal">
@@ -1145,13 +1229,23 @@ function renderHoldingModal() {
         </div>
         <div class="field">
           <label>Tag / location (optional)</label>
-          <input data-field="tag" value="${esc(state.tag)}" list="tag-options" placeholder="Cold storage, Coinbase, Nordnet…">
-          <datalist id="tag-options">${[...new Set(state.holdings.map((h) => h.tag).filter(Boolean))].map((t) => `<option value="${esc(t)}">`).join("")}</datalist>
+          <input data-field="tag" value="${esc(state.tag)}" placeholder="Cold storage, Coinbase, Nordnet…">
+          ${
+            knownTags.length
+              ? `<div class="tag-picker">${knownTags
+                  .map((t) => {
+                    const active = t === state.tag;
+                    const c = tagColor(t);
+                    return `<button type="button" class="tag-chip tag-chip-btn" data-action="pick-tag" data-tag="${esc(t)}" style="color:${c.text};border-color:${c.border};background:${active ? c.bgActive : c.bg}">${esc(t)}</button>`;
+                  })
+                  .join("")}</div>`
+              : ""
+          }
         </div>
         <div class="dialog-actions">
           ${editing ? `<button type="button" class="btn btn-danger" data-action="remove">Remove</button>` : ""}
           <button type="button" class="btn btn-ghost" data-action="close">Cancel</button>
-          <button type="submit" class="btn btn-primary">${editing ? "Save" : "Add"}</button>
+          <button type="submit" class="btn btn-primary" ${canSubmit ? "" : "disabled"}>${editing ? "Save" : "Add"}</button>
         </div>
       </form>
     </div>
@@ -1212,6 +1306,8 @@ function render() {
   const usdSplit = splitUsd(t.usd);
   const hasCost = state.holdings.some((h) => h.costBasis != null);
   const allocTotal = t.usd || 1;
+  const tagGroups = tagBreakdown(t.rows);
+  const shownRows = visibleRows(t.rows);
   const historySummary = computeHistorySummary();
   headEl.innerHTML = `
     <header class="masthead">
@@ -1295,6 +1391,23 @@ function render() {
         </div>
       </div>
       ${
+        tagGroups.length > 1
+          ? `<div class="tag-breakdown">${tagGroups
+              .map(
+                (g) =>
+                  (() => {
+                    const active = state.tagFilter.has(g.tag);
+                    const c = tagColor(g.tag);
+                    return `<button type="button" class="tag-filter-chip${active ? " active" : ""}" data-action="toggle-tag-filter" data-tag="${esc(g.tag)}" style="color:${c.text};border-color:${c.border};background:${active ? c.bgActive : "transparent"}">
+                      <span class="tag-filter-name">${esc(g.tag)}</span>
+                      <span class="tag-filter-value" style="background:${c.bg}">${esc(formatUsd(g.valueUsd))}</span>
+                    </button>`;
+                  })(),
+              )
+              .join("")}</div>`
+          : ""
+      }
+      ${
         state.holdings.length
           ? `<div class="alloc-row" aria-hidden="true"><div class="allocation">${t.rows
               .filter((r) => r.valueUsd > 0)
@@ -1314,7 +1427,9 @@ function render() {
                 ).join("")}
               </div>
             </div>`
-          : `<div class="holdings">${t.rows.map((row) => renderHolding(row, allocTotal, hasCost)).join("")}</div>`
+          : shownRows.length
+            ? `<div class="holdings">${shownRows.map((row) => renderHolding(row, allocTotal, hasCost)).join("")}</div>`
+            : `<div class="empty"><p>No holdings match the selected tags.</p></div>`
       }
     </section>
     ${renderModal()}
@@ -1332,6 +1447,19 @@ function focusField(name) {
 function parseQty(raw) {
   const n = Number(String(raw).replace(",", "."));
   return Number.isFinite(n) && n >= 0 ? n : NaN;
+}
+
+// inputmode="decimal" only hints at a numeric mobile keyboard - it doesn't
+// stop anyone typing letters on a real keyboard. Strip anything that isn't
+// a digit, keeping at most one decimal separator (. or , - parseQty above
+// accepts either), as the user types.
+function sanitizeNumericInput(value) {
+  let seenSeparator = false;
+  return value.replace(/[^\d.,]/g, "").replace(/[.,]/g, (ch) => {
+    if (seenSeparator) return "";
+    seenSeparator = true;
+    return ch;
+  });
 }
 
 function openAdd(prefill) {
@@ -1543,6 +1671,18 @@ function saveEdit() {
   closeModal();
 }
 
+function requestRemove() {
+  if (!state.modal || state.modal.kind !== "edit") return;
+  state.modal.confirmRemove = true;
+  render();
+}
+
+function cancelRemove() {
+  if (!state.modal || state.modal.kind !== "edit") return;
+  state.modal.confirmRemove = false;
+  render();
+}
+
 function removeCurrent() {
   if (!state.modal || state.modal.kind !== "edit") return;
   state.holdings = state.holdings.filter((h) => h.id !== state.modal.id);
@@ -1559,13 +1699,20 @@ root.addEventListener("click", (event) => {
     event.preventDefault();
     const action = actionEl.dataset.action;
     if (action === "close") closeModal();
-    if (action === "remove") removeCurrent();
+    if (action === "remove") requestRemove();
+    if (action === "cancel-remove") cancelRemove();
+    if (action === "confirm-remove") removeCurrent();
     if (action === "export") exportData();
     if (action === "import-trigger") root.querySelector('[data-field="import-file"]')?.click();
+    if (action === "pick-tag") {
+      state.tag = actionEl.dataset.tag || "";
+      render();
+    }
     if (action === "pick") {
       state.selectedSymbol = actionEl.dataset.symbol || "";
       state.selectedName = actionEl.dataset.name || "";
       state.searchQ = state.selectedSymbol;
+      state.searchResults = [];
       render();
       focusField("quantity");
     }
@@ -1589,6 +1736,12 @@ root.addEventListener("click", (event) => {
   if (action === "quick") {
     openAdd({ symbol: actionEl.dataset.symbol || "", name: actionEl.dataset.name || "" });
   }
+  if (action === "toggle-tag-filter") {
+    const tag = actionEl.dataset.tag;
+    if (state.tagFilter.has(tag)) state.tagFilter.delete(tag);
+    else state.tagFilter.add(tag);
+    render();
+  }
 });
 
 root.addEventListener("submit", (event) => {
@@ -1600,15 +1753,32 @@ root.addEventListener("submit", (event) => {
 
 root.addEventListener("input", (event) => {
   const field = event.target.dataset.field;
-  if (field === "quantity") state.quantity = event.target.value;
-  if (field === "cost") state.costBasis = event.target.value;
+  if (field === "quantity" || field === "cost") {
+    const clean = sanitizeNumericInput(event.target.value);
+    if (clean !== event.target.value) event.target.value = clean;
+    if (field === "quantity") state.quantity = clean;
+    else state.costBasis = clean;
+  }
   if (field === "tag") state.tag = event.target.value;
   if (field === "search") {
     state.searchQ = event.target.value;
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => runSearch(event.target.value), 250);
   }
+  if (field === "quantity" || field === "search") updateSubmitState();
 });
+
+// Quantity/search typing deliberately skips a full render() (it would steal
+// focus mid-keystroke), so the submit button's disabled state - which
+// depends on both fields - has to be patched directly instead.
+function updateSubmitState() {
+  const btn = root.querySelector('.dialog button[type="submit"]');
+  if (!btn || !state.modal) return;
+  const symbol = (state.selectedSymbol || state.searchQ).trim();
+  const qty = parseQty(state.quantity);
+  const validQty = !Number.isNaN(qty) && qty !== 0;
+  btn.disabled = !(state.modal.kind === "edit" ? validQty : symbol !== "" && validQty);
+}
 
 root.addEventListener("change", (event) => {
   const field = event.target.dataset.field;
