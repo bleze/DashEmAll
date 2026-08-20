@@ -8,6 +8,7 @@ const HISTORY_KEY = "dashemall.history";
 const HISTORY_MAX_DAYS = 365;
 const REFRESH_MS = 30_000;
 const NEWS_MS = 5 * 60_000;
+const SPARKLINE_MS = 6 * 60 * 60_000;
 const STALE_MS = 4 * REFRESH_MS;
 
 const CURRENCY_OPTIONS = [
@@ -186,6 +187,7 @@ const historyCache = loadJson(HISTORY_KEY);
 const state = {
   holdings: loadHoldings(),
   quotes: cache?.quotes || {},
+  sparklines: cache?.sparklines || {},
   fx: cache?.fx || {},
   news: newsCache?.news || {},
   history: Array.isArray(historyCache) ? historyCache : [],
@@ -235,6 +237,15 @@ function loadHoldings() {
 
 function persist() {
   saveJson(HOLDINGS_KEY, state.holdings);
+}
+
+function persistCache() {
+  saveJson(CACHE_KEY, {
+    quotes: state.quotes,
+    sparklines: state.sparklines,
+    fx: state.fx,
+    updatedAt: state.updatedAt,
+  });
 }
 
 function loadSettings() {
@@ -558,6 +569,32 @@ async function quoteSymbol(symbol) {
   return quoteYahoo(symbol);
 }
 
+// Sparkline history is fetched separately from the price quote, on its own
+// slow cadence - not on every 30s refresh. Two reasons: a longer chart range
+// changes Yahoo's chartPreviousClose (it's relative to the start of the
+// requested range, not literally "yesterday"), which would corrupt the
+// day's % change if reused for quotes; and CoinGecko's free tier doesn't
+// need an extra call every 30s for something purely decorative.
+async function fetchStockSparkline(symbol) {
+  const json = await fetchYahoo(`/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1mo`);
+  const closes = json?.chart?.result?.[0]?.indicators?.quote?.[0]?.close || [];
+  return closes.filter((v) => typeof v === "number");
+}
+
+async function fetchCryptoSparkline(symbol) {
+  const meta = cryptoMeta(symbol);
+  if (!meta?.id) return [];
+  const data = await fetchJsonDirect(
+    `https://api.coingecko.com/api/v3/coins/${meta.id}/market_chart?vs_currency=usd&days=30&interval=daily`,
+  );
+  return (data.prices || []).map(([, p]) => p).filter((v) => typeof v === "number");
+}
+
+async function fetchSparkline(symbol) {
+  if (cryptoMeta(symbol) || /-(USD|USDT)$/.test(symbol)) return fetchCryptoSparkline(symbol);
+  return fetchStockSparkline(symbol);
+}
+
 async function fetchFx() {
   const fx = { USD: 1 };
   try {
@@ -863,10 +900,40 @@ function renderTape() {
   `;
 }
 
+// A faded 30-day sparkline behind each holding card - purely decorative,
+// styled like Google Finance's mini chart: a single clean line, no filled
+// area (a fill's flat closing edges along the sides/bottom read as an
+// unintended border once faded against a dark card). Confined to a middle
+// band, not stretched edge-to-edge, so it doesn't collide with the text.
+function renderHoldingSpark(points, dir) {
+  if (!points || points.length < 2) return "";
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const range = max - min || 1;
+  const W = 300;
+  const H = 100;
+  const TOP = 22;
+  const BOTTOM = 82;
+  const band = BOTTOM - TOP;
+  const line = points
+    .map((p, i) => {
+      const x = (i / (points.length - 1)) * W;
+      const y = TOP + (1 - (p - min) / range) * band;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return `
+    <svg class="holding-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      <polyline class="hist-line ${dir}" points="${line}"></polyline>
+    </svg>
+  `;
+}
+
 function renderHolding(row, allocTotal, hasCost) {
   const q = row.quote;
   const missing = !q;
   const stale = q && state.now - (q.fetchedAt || 0) > STALE_MS;
+  const dir = signClass(row.dayUsd);
   const pct = row.valueUsd / allocTotal;
   const lead = row.headlines[0];
   const rest = row.headlines.slice(1, 2);
@@ -876,8 +943,9 @@ function renderHolding(row, allocTotal, hasCost) {
       ? formatLocal(toLocal(toUsd(q.price, q.currency, state.fx), state.fx))
       : null;
   return `
-    <article class="holding" data-holding="${esc(row.holding.id)}" data-dir="${signClass(row.dayUsd)}">
+    <article class="holding" data-holding="${esc(row.holding.id)}" data-dir="${dir}">
       <button type="button" class="holding-main" data-action="edit" data-id="${esc(row.holding.id)}">
+        ${renderHoldingSpark(state.sparklines[row.holding.symbol], dir)}
         <div class="holding-ident">
           <span class="swatch" style="background:${row.color}"></span>
           <div>
@@ -1024,45 +1092,41 @@ function renderHoldingModal() {
   `;
 }
 
-function renderHistoryChart() {
+// Value-over-time is shown as a faded background inside the hero card
+// itself (same treatment as the per-holding sparklines) rather than a
+// separate section, to save vertical space.
+function computeHistorySummary() {
   const points = state.history;
-  if (points.length < 2) {
-    return `
-      <section class="history">
-        <div class="history-head"><h2>Value over time</h2></div>
-        <div class="history-empty">One point is recorded per day - check back tomorrow to see a trend.</div>
-      </section>
-    `;
-  }
+  if (points.length < 2) return null;
   const values = points.map((p) => p.usd);
   const min = Math.min(...values);
   const max = Math.max(...values);
-  const range = max - min || 1;
-  const W = 600;
-  const H = 120;
-  const PAD = 10;
-  const coords = points.map((p, i) => {
-    const x = (i / (points.length - 1)) * W;
-    const y = H - PAD - ((p.usd - min) / range) * (H - PAD * 2);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  });
-  const linePoints = coords.join(" ");
-  const areaPoints = `0,${H} ${linePoints} ${W},${H}`;
   const change = values[values.length - 1] - values[0];
   const changePct = values[0] ? (change / values[0]) * 100 : 0;
-  const dir = signClass(change);
   const firstLabel = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(points[0].ts);
+  return { points, min, max, change, changePct, dir: signClass(change), firstLabel };
+}
+
+function renderHeroSpark(summary) {
+  if (!summary) return "";
+  const { points, min, max } = summary;
+  const range = max - min || 1;
+  const W = 600;
+  const H = 200;
+  const TOP = 20;
+  const BOTTOM = 170;
+  const band = BOTTOM - TOP;
+  const line = points
+    .map((p, i) => {
+      const x = (i / (points.length - 1)) * W;
+      const y = TOP + (1 - (p.usd - min) / range) * band;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
   return `
-    <section class="history">
-      <div class="history-head">
-        <h2>Value over time</h2>
-        <div class="history-change ${dir}">${esc(formatSignedUsd(change))} · ${esc(formatPct(changePct))} since ${esc(firstLabel)}</div>
-      </div>
-      <svg class="history-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-        <polygon class="hist-area ${dir}" points="${areaPoints}"></polygon>
-        <polyline class="hist-line ${dir}" points="${linePoints}"></polyline>
-      </svg>
-    </section>
+    <svg class="hero-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      <polyline class="hist-line ${summary.dir}" points="${line}"></polyline>
+    </svg>
   `;
 }
 
@@ -1082,6 +1146,7 @@ function render() {
   const usdSplit = splitUsd(t.usd);
   const hasCost = state.holdings.some((h) => h.costBasis != null);
   const allocTotal = t.usd || 1;
+  const historySummary = computeHistorySummary();
   headEl.innerHTML = `
     <header class="masthead">
       <div class="brand">
@@ -1102,21 +1167,29 @@ function render() {
     ${state.error ? `<div class="error-banner">${esc(state.error)}</div>` : ""}
     <section class="hero">
       <div class="hero-main">
-        <div class="kicker">Total value</div>
-        <div class="total-usd">${esc(usdSplit.main)}<span class="frac">${esc(usdSplit.frac)}</span></div>
-        ${state.settings.localCurrency !== "USD" ? `<div class="total-local">${esc(formatLocal(t.local))}</div>` : ""}
-        <div class="delta ${signClass(t.changeUsd)}">
-          <span>${esc(formatSignedUsd(t.changeUsd))} today</span>
-          <span>${esc(formatPct(t.changePct))}</span>
-          ${
-            state.settings.localCurrency !== "USD"
-              ? `<span class="fx-note">${
-                  state.fx[state.settings.localCurrency]
-                    ? `USD/${esc(state.settings.localCurrency)} ${state.fx[state.settings.localCurrency].toFixed(4)}`
-                    : "Waiting for FX rate"
-                }</span>`
-              : ""
-          }
+        ${renderHeroSpark(historySummary)}
+        <div class="hero-content">
+          <div class="kicker">Total value</div>
+          <div class="total-usd">${esc(usdSplit.main)}<span class="frac">${esc(usdSplit.frac)}</span></div>
+          ${state.settings.localCurrency !== "USD" ? `<div class="total-local">${esc(formatLocal(t.local))}</div>` : ""}
+          <div class="delta ${signClass(t.changeUsd)}">
+            <span>${esc(formatSignedUsd(t.changeUsd))} today</span>
+            <span>${esc(formatPct(t.changePct))}</span>
+            ${
+              state.settings.localCurrency !== "USD"
+                ? `<span class="fx-note">${
+                    state.fx[state.settings.localCurrency]
+                      ? `USD/${esc(state.settings.localCurrency)} ${state.fx[state.settings.localCurrency].toFixed(4)}`
+                      : "Waiting for FX rate"
+                  }</span>`
+                : ""
+            }
+            ${
+              historySummary
+                ? `<span class="history-change ${historySummary.dir}">${esc(formatSignedUsd(historySummary.change))} · ${esc(formatPct(historySummary.changePct))} since ${esc(historySummary.firstLabel)}</span>`
+                : ""
+            }
+          </div>
         </div>
       </div>
       <div class="side-stats">
@@ -1144,7 +1217,6 @@ function render() {
         </div>
       </div>
     </section>
-    ${renderHistoryChart()}
   `;
   updateTape();
   bodyEl.innerHTML = `
@@ -1257,7 +1329,7 @@ async function refreshQuotes() {
     state.updatedAt = Date.now();
     state.status = "live";
     state.error = null;
-    saveJson(CACHE_KEY, { quotes: state.quotes, fx: state.fx, updatedAt: state.updatedAt });
+    persistCache();
     for (const holding of state.holdings) {
       const q = quotes[holding.symbol];
       if (q) holding.name = q.name;
@@ -1286,6 +1358,22 @@ async function refreshNews() {
   );
   state.news = next;
   saveJson(NEWS_KEY, { news: state.news, updatedAt: Date.now() });
+  if (!state.modal) render();
+}
+
+async function refreshSparklines() {
+  const symbols = [...new Set(state.holdings.map((h) => h.symbol))];
+  await Promise.all(
+    symbols.map(async (symbol) => {
+      try {
+        const points = await fetchSparkline(symbol);
+        if (points.length > 1) state.sparklines[symbol] = points;
+      } catch {
+        // keep last known sparkline
+      }
+    }),
+  );
+  persistCache();
   if (!state.modal) render();
 }
 
@@ -1362,6 +1450,17 @@ function addHolding() {
   closeModal();
   refreshQuotes();
   refreshNews();
+  if (!state.sparklines[symbol]) {
+    fetchSparkline(symbol)
+      .then((points) => {
+        if (points.length > 1) {
+          state.sparklines[symbol] = points;
+          persistCache();
+          render();
+        }
+      })
+      .catch(() => {});
+  }
 }
 
 function saveEdit() {
@@ -1487,5 +1586,7 @@ setInterval(() => {
 render();
 refreshQuotes();
 refreshNews();
+refreshSparklines();
 setInterval(refreshQuotes, REFRESH_MS);
 setInterval(refreshNews, NEWS_MS);
+setInterval(refreshSparklines, SPARKLINE_MS);

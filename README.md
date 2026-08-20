@@ -1,12 +1,12 @@
 # DashEmAll
 
-A single-file, no-build portfolio ledger for stocks and crypto. Open `web/index.html` directly in a browser — there's no server, no bundler, and no backend. Holdings are stored in the browser's `localStorage`, so your data stays on the machine you added it on.
+A single-file, no-build portfolio ledger for stocks and crypto. Open `index.html` directly in a browser — there's no server, no bundler, and no backend. Holdings are stored in the browser's `localStorage`, so your data stays on the machine you added it on.
 
 ## Running it
 
-Open `web/index.html` in a browser (double-click, or run `web/open.bat` on Windows). That's the whole setup.
+Open `index.html` in a browser (double-click, or run `open.bat` on Windows). That's the whole setup.
 
-If you'd rather serve it over `http://` (some browsers/extensions behave more predictably with fetch than with `file://`), any static file server works, e.g. from `web/`:
+If you'd rather serve it over `http://` (some browsers/extensions behave more predictably with fetch than with `file://`), any static file server works, e.g. from the repo root:
 
 ```
 npx serve .
@@ -17,7 +17,8 @@ npx serve .
 - Add stock and crypto tickers with a quantity, an optional average cost basis, and an optional free-text tag (e.g. "Cold storage", "Coinbase", "Nordnet") for where it's held. The same symbol can appear multiple times under different tags — they're tracked as separate lots, not merged, so "BTC on an exchange" and "BTC in cold storage" show as distinct rows while still rolling up into the shared totals.
 - Live-ish price refresh every 30 seconds (Yahoo Finance for stocks, CoinGecko/Binance for crypto), with USD + your chosen local-currency totals, daily change, and P/L when a cost basis is set.
 - Each holding flags itself "stale" if its price hasn't refreshed successfully in a while (4 missed refresh cycles), even if the overall status still says "Live" because other holdings refreshed fine — a per-symbol fetch failure otherwise fails silently.
-- A "Value over time" chart (inline SVG, no charting library) built from one snapshot per calendar day, kept in `localStorage` — needs at least two days of data before a trend line appears.
+- The total-value card has a faded line behind it showing value over time, plus a "+$X · +Y% since <date>" figure next to today's change — built from one snapshot per calendar day, kept in `localStorage`. Needs at least two days of data before it appears.
+- Each holding card has a faded 30-day price sparkline behind its content, colored by the day's direction — same treatment as the total-value trend line, just per-symbol. Fetched on its own slow cadence (every 6 hours, plus once when a holding is first added), separate from the 30-second price refresh — see below for why.
 - Settings (gear button, top right) let you pick a local currency shown alongside USD (DKK/EUR/GBP/SEK/NOK/USD), a 12/24-hour clock, and a timezone to display the clock/date in — all independent of USD, which is always the base currency everything is computed in.
 - A scrolling "Wire" headline ticker plus a couple of headlines per holding, sourced from Yahoo Finance's news search first, with Google News RSS and a filtered Hacker News search as fallbacks.
 - Everything persists to `localStorage`; no accounts, no sync, no server-side storage.
@@ -26,9 +27,9 @@ npx serve .
 
 Plain HTML/CSS/JS, no framework and no build step:
 
-- `web/index.html` — page shell with three containers inside `#app` (`#app-head`, `#app-tape`, `#app-body`), loads `app.js` and `styles.css`.
-- `web/app.js` — all application logic: state, rendering, price/news fetching, and event delegation on `#app`.
-- `web/styles.css` — styling.
+- `index.html` — page shell with three containers inside `#app` (`#app-head`, `#app-tape`, `#app-body`), loads `app.js` and `styles.css`.
+- `app.js` — all application logic: state, rendering, price/news fetching, and event delegation on `#app`.
+- `styles.css` — styling.
 
 ### Rendering
 
@@ -42,6 +43,7 @@ Because this is a static page with no backend, price and news data come straight
 - **Stock quotes & ticker search** — Yahoo Finance. Yahoo does not send CORS headers, so browser requests to it are proxied through public CORS relays (allorigins.win, corsproxy.io, r.jina.ai raced in parallel) as a best-effort fallback. These relays are unreliable by nature (rate limits, outages), so:
   - Ticker search resolves against a small built-in directory of common tickers first, so the dropdown never depends on those relays being up. A live Yahoo lookup is merged in on top when it succeeds.
   - Quote refreshes silently keep the last known price if a symbol's fetch fails.
+  - Per-holding sparkline history is fetched separately from the price quote (every 6h, not every 30s), for two reasons: requesting a longer chart range from Yahoo changes `chartPreviousClose` (it's relative to the start of the requested range, not literally "yesterday"), so reusing that response would corrupt the day's % change; and CoinGecko's free tier doesn't need an extra call every 30s for something purely decorative.
 - **News** — tried in order per holding: Yahoo Finance's own news-search results (relevant, fresh, includes real article thumbnails), then Google News RSS (scraped via the same proxy relays — Google actively rate-limits/blocks that proxy traffic, so treat it as a bonus, not a given), then Hacker News (Algolia search_by_date, kept only if the story title actually contains the company/asset name — Algolia's search is fuzzy enough to otherwise return unrelated stories). Anything older than 14 days is dropped rather than shown as if it were current. When a result has no real thumbnail, the publisher's favicon is used instead.
 - **FX rates** — open.er-api.com, with frankfurter.dev as a fallback.
 

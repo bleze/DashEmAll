@@ -219,6 +219,7 @@ button {
   height: 14px;
   border: 1px solid var(--brass);
   pointer-events: none;
+  z-index: 2;
 }
 
 .hero-main::before {
@@ -326,28 +327,19 @@ button {
   font-size: 13px;
 }
 
-.history {
-  background: var(--card);
-  border: 1px solid var(--line);
-  padding: 16px 18px;
-  margin-bottom: 22px;
+.hero-content {
+  position: relative;
+  z-index: 1;
 }
 
-.history-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 10px;
-}
-
-.history-head h2 {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--muted);
+.hero-spark {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.1;
+  z-index: 0;
+  pointer-events: none;
 }
 
 .history-change {
@@ -366,18 +358,6 @@ button {
   color: var(--muted);
 }
 
-.history-empty {
-  color: var(--faint);
-  font-size: 13px;
-  font-style: italic;
-}
-
-.history-chart {
-  display: block;
-  width: 100%;
-  height: 110px;
-}
-
 .hist-line {
   fill: none;
   stroke-width: 2;
@@ -389,19 +369,28 @@ button {
   fill-opacity: 0.12;
 }
 
-.hist-line.up,
-.hist-area.up {
+/* Kept separate on purpose: a combined ".hist-line.up, .hist-area.up { fill: ... }"
+   rule would set fill on the line too, and a two-class selector beats the
+   plain ".hist-line { fill: none; }" rule above - so the polyline silently
+   gets filled again (SVG fills a polyline's implicit closing edge even
+   though its stroke doesn't close), reproducing the exact flat-bottomed
+   "mountain" bug this comment is here to prevent regressing. */
+.hist-line.up {
   stroke: var(--up);
+}
+.hist-area.up {
   fill: var(--up);
 }
-.hist-line.down,
-.hist-area.down {
+.hist-line.down {
   stroke: var(--down);
+}
+.hist-area.down {
   fill: var(--down);
 }
-.hist-line.flat,
-.hist-area.flat {
+.hist-line.flat {
   stroke: var(--muted);
+}
+.hist-area.flat {
   fill: var(--muted);
 }
 
@@ -526,6 +515,16 @@ button {
   font-weight: 600;
 }
 
+/* .btn:hover only changes border-color, which is already brass here - needs
+   its own visible hover state instead of silently inheriting a no-op one.
+   A plain color shift (no filter/box-shadow) - filter forced a different
+   text-compositing path that made the label look smeared, and an outer
+   box-shadow ring read as the button growing even though it didn't. */
+.btn-primary:hover {
+  background: #ecc077;
+  border-color: #ecc077;
+}
+
 .btn-ghost {
   background: transparent;
 }
@@ -578,6 +577,7 @@ button {
   color: inherit;
   text-align: left;
   position: relative;
+  overflow: hidden;
 }
 
 .holding-main::before {
@@ -588,6 +588,23 @@ button {
   bottom: 0;
   width: 3px;
   background: var(--faint);
+  z-index: 2;
+}
+
+.holding-spark {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.07;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.holding-ident,
+.holding-metrics {
+  position: relative;
+  z-index: 1;
 }
 
 .holding[data-dir="up"] .holding-main::before {
