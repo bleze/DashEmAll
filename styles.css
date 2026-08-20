@@ -253,8 +253,18 @@ button {
   font-variant-numeric: tabular-nums lining-nums;
 }
 
+/* Cents/øre drawn dimmer than the whole-number part, everywhere a currency
+   figure appears - not just the hero total. Opacity rather than a fixed
+   grey, so it darkens whatever color the figure already has (muted white
+   for a plain number, a darker green/red inside a colored P/L figure)
+   instead of overriding every case to the same grey. The hero's huge font
+   additionally shrinks the fraction; everywhere else is already small
+   enough that shrinking further would hurt legibility. */
+.frac {
+  opacity: 0.4;
+}
+
 .total-usd .frac {
-  color: var(--muted);
   font-size: 0.5em;
 }
 
@@ -615,8 +625,8 @@ button {
 .holding-main {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  gap: 18px;
+  justify-content: flex-start;
+  gap: 10px;
   padding: 18px 18px 16px;
   background: transparent;
   border: 0;
@@ -792,24 +802,27 @@ button {
 
 .holding-news {
   border-left: 1px dashed rgba(126, 200, 201, 0.22);
-  padding: 14px 16px 14px 18px;
+  /* Left padding is 6px less than the ticker side's 18px on purpose - the
+     thumbnail's own internal padding (see .news-item img) makes up the
+     difference, so the icon graphic lines up with the same visual inset as
+     the +/- badge on the other side of the divider. Top/bottom padding is
+     tight because with 3 headlines now, the news column would otherwise be
+     the tallest thing in the card and stretch the metrics side to match. */
+  padding: 8px 16px 8px 12px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  /* Center rather than flex-start: when this column's natural content is
+     shorter than the metrics side (which varies row to row - cost basis,
+     currency conversion lines, etc.), any leftover space splits evenly
+     top/bottom instead of all collecting below the last headline. */
+  justify-content: center;
+  gap: 2px;
   background: linear-gradient(90deg, rgba(126, 200, 201, 0.035), transparent 48%);
-}
-
-.news-kicker {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: var(--wire);
 }
 
 .news-item {
   display: grid;
-  grid-template-columns: 44px 1fr;
+  grid-template-columns: 36px 1fr;
   gap: 10px;
   text-decoration: none;
   color: inherit;
@@ -820,16 +833,26 @@ button {
   grid-template-columns: 1fr;
 }
 
+/* Compact rows drop the image column by default (denser layout), but if a
+   thumbnail is actually available, show it anyway - same size as the lead
+   item's, so thumbnails don't come in two visibly different sizes. */
+.news-item.compact.has-thumb {
+  grid-template-columns: 36px 1fr;
+  gap: 10px;
+}
+
 .news-item img {
   /* Thumbnail is a publisher favicon, not a photo - square slot, minimal
-     padding, so a small icon doesn't shrink further into empty space. */
-  width: 44px;
-  height: 44px;
+     padding, so a small icon doesn't shrink further into empty space. No
+     background box - just the icon itself. Sized (with the padding above)
+     so 3 stacked headlines match the metrics column's natural height
+     exactly - measured via devtools, not guessed. */
+  width: 36px;
+  height: 36px;
   object-fit: contain;
-  padding: 6px;
-  border-radius: 6px;
+  padding: 4px;
+  margin-top: -2px;
   filter: grayscale(0.45) contrast(1.05);
-  background: var(--bg-2);
 }
 
 .news-item:hover img {
@@ -846,7 +869,7 @@ button {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--muted);
-  margin-bottom: 3px;
+  margin-bottom: 2px;
 }
 
 .news-title {
@@ -857,6 +880,13 @@ button {
   line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+/* Two compact headlines now show instead of one - clamp each to a single
+   line so three items don't grow the card as much as three 2-line ones. */
+.news-item.compact .news-title {
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
 }
 
 .news-empty {

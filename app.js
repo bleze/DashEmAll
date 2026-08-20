@@ -131,6 +131,10 @@ const STOCK_DIRECTORY = [
   { symbol: "ARKK", name: "ARK Innovation", type: "ETF", exchange: "NYSEARCA" },
   { symbol: "GLD", name: "SPDR Gold Shares", type: "ETF", exchange: "NYSEARCA" },
   { symbol: "SLV", name: "iShares Silver Trust", type: "ETF", exchange: "NYSEARCA" },
+  { symbol: "GC=F", name: "Gold", type: "FUTURE", exchange: "COMEX" },
+  { symbol: "SI=F", name: "Silver", type: "FUTURE", exchange: "COMEX" },
+  { symbol: "PL=F", name: "Platinum", type: "FUTURE", exchange: "COMEX" },
+  { symbol: "PA=F", name: "Palladium", type: "FUTURE", exchange: "COMEX" },
   { symbol: "NOVO-B.CO", name: "Novo Nordisk", type: "EQUITY", exchange: "CPH" },
   { symbol: "VWS.CO", name: "Vestas Wind Systems", type: "EQUITY", exchange: "CPH" },
   { symbol: "MAERSK-B.CO", name: "A.P. Møller - Mærsk", type: "EQUITY", exchange: "CPH" },
@@ -152,6 +156,25 @@ const STOCK_DIRECTORY = [
   { symbol: "RBREW.CO", name: "Royal Unibrew", type: "EQUITY", exchange: "CPH" },
   { symbol: "BAVA.CO", name: "Bavarian Nordic", type: "EQUITY", exchange: "CPH" },
 ];
+
+// Quantity for these is priced in troy ounces (the COMEX futures contract
+// unit) - not shares, not grams. Surfaced in the UI so a physical holding by
+// weight doesn't get entered in the wrong unit by mistake.
+const QUANTITY_UNITS = {
+  "GC=F": { short: "troy oz", long: "troy ounces" },
+  "SI=F": { short: "troy oz", long: "troy ounces" },
+  "PL=F": { short: "troy oz", long: "troy ounces" },
+  "PA=F": { short: "troy oz", long: "troy ounces" },
+};
+
+// The holding card's Qty column is one of four narrow grid cells - "troy
+// ounces" risks wrapping there, so it only gets the spelled-out form where
+// there's room to spare (the add/edit dialog).
+function quantityUnit(symbol, long) {
+  const unit = QUANTITY_UNITS[symbol];
+  if (!unit) return "";
+  return long ? unit.long : unit.short;
+}
 
 const HOLDING_COLORS = [
   "#d4b56a",
@@ -301,6 +324,20 @@ function splitUsd(n) {
   const match = formatted.match(/^(.*)([.]\d{2})$/);
   if (!match) return { main: formatted, frac: "" };
   return { main: match[1], frac: match[2] };
+}
+
+// Same "cents drawn dimmer" treatment as the big hero total, generalized to
+// any already-formatted currency/number string - handles both a period
+// decimal (USD-style "$1,234.56") and a comma decimal (da-DK style
+// "1.234,56 kr."), and keeps a trailing currency suffix at full brightness.
+function withDimmedDecimals(formatted) {
+  // Greedy main + a suffix that must start with a non-digit (or be empty)
+  // forces this to land on the trailing decimal group, not an earlier
+  // thousands-separator - "$72,782.11" would otherwise match ",78" first.
+  const match = formatted.match(/^(.*)([.,]\d{2})(\D.*|)$/);
+  if (!match) return esc(formatted);
+  const [, main, frac, suffix] = match;
+  return `${esc(main)}<span class="frac">${esc(frac)}</span>${esc(suffix)}`;
 }
 
 function formatQty(n) {
@@ -970,12 +1007,12 @@ function wireHeadlines() {
 }
 
 function renderNewsItem(item, compact) {
-  const thumb =
-    !compact && item.thumbnail
-      ? `<img src="${esc(item.thumbnail)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">`
-      : "";
+  const hasThumb = Boolean(item.thumbnail);
+  const thumb = hasThumb
+    ? `<img src="${esc(item.thumbnail)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">`
+    : "";
   return `
-    <a class="news-item ${compact ? "compact" : ""}" href="${esc(item.link)}" target="_blank" rel="noopener noreferrer">
+    <a class="news-item ${compact ? "compact" : ""} ${hasThumb ? "has-thumb" : ""}" href="${esc(item.link)}" target="_blank" rel="noopener noreferrer">
       ${thumb}
       <div>
         <div class="news-meta">${esc(item.publisher)} · ${esc(formatNewsAgo(item.publishedAt, state.now))}</div>
@@ -1040,7 +1077,7 @@ function renderHolding(row, allocTotal, hasCost) {
   const dir = signClass(row.dayUsd);
   const pct = row.valueUsd / allocTotal;
   const lead = row.headlines[0];
-  const rest = row.headlines.slice(1, 2);
+  const rest = row.headlines.slice(1, 3);
   const localCode = state.settings.localCurrency;
   const convertedPrice =
     q && q.currency !== localCode
@@ -1070,28 +1107,30 @@ function renderHolding(row, allocTotal, hasCost) {
         <div class="holding-metrics">
           <div>
             <div class="metric-label">Qty</div>
-            <div class="num">${esc(formatQty(row.holding.quantity))}</div>
+            <div class="num">${esc(formatQty(row.holding.quantity))}${
+              quantityUnit(row.holding.symbol) ? ` ${esc(quantityUnit(row.holding.symbol))}` : ""
+            }</div>
           </div>
           <div>
             <div class="metric-label">Price</div>
-            <div class="num">${q ? esc(formatPrice(q.price, q.currency)) : "—"}</div>
-            ${convertedPrice ? `<div class="name">${esc(convertedPrice)}</div>` : ""}
+            <div class="num">${q ? withDimmedDecimals(formatPrice(q.price, q.currency)) : "—"}</div>
+            ${convertedPrice ? `<div class="name">${withDimmedDecimals(convertedPrice)}</div>` : ""}
           </div>
           <div>
             <div class="metric-label">USD / ${esc(localCode)} · ${(pct * 100).toFixed(1)}%</div>
-            <div class="num">${esc(formatUsd(row.valueUsd))}</div>
-            ${localCode !== "USD" ? `<div class="name">${esc(formatLocal(toLocal(row.valueUsd, state.fx)))}</div>` : ""}
+            <div class="num">${withDimmedDecimals(formatUsd(row.valueUsd))}</div>
+            ${localCode !== "USD" ? `<div class="name">${withDimmedDecimals(formatLocal(toLocal(row.valueUsd, state.fx)))}</div>` : ""}
           </div>
           <div>
             <div class="metric-label">Profit/Loss</div>
             ${
               hasCost
                 ? `<div class="num ${row.pnlUsd == null ? "" : signClass(row.pnlUsd)}">${
-                    row.pnlUsd == null ? "—" : esc(formatSignedUsd(row.pnlUsd))
+                    row.pnlUsd == null ? "—" : withDimmedDecimals(formatSignedUsd(row.pnlUsd))
                   }</div>
                   ${
                     row.pnlUsd != null && localCode !== "USD"
-                      ? `<div class="name ${signClass(row.pnlUsd)}">${esc(formatSignedLocal(toLocal(row.pnlUsd, state.fx)))}</div>`
+                      ? `<div class="name ${signClass(row.pnlUsd)}">${withDimmedDecimals(formatSignedLocal(toLocal(row.pnlUsd, state.fx)))}</div>`
                       : ""
                   }`
                 : ""
@@ -1100,7 +1139,6 @@ function renderHolding(row, allocTotal, hasCost) {
         </div>
       </button>
       <div class="holding-news">
-        <div class="news-kicker">${row.crypto ? "Crypto wire" : "Company wire"}</div>
         ${
           lead
             ? `${renderNewsItem(lead, false)}${rest.map((item) => renderNewsItem(item, true)).join("")}`
@@ -1186,6 +1224,7 @@ function renderHoldingModal() {
   const qty = parseQty(state.quantity);
   const validQty = !Number.isNaN(qty) && qty !== 0;
   const canSubmit = editing ? validQty : symbol !== "" && validQty;
+  const unit = quantityUnit(editing ? current?.symbol : symbol.toUpperCase(), true);
   return `
     <div class="dialog-backdrop">
       <form class="dialog" data-action="${editing ? "save-edit" : "save-add"}">
@@ -1220,8 +1259,8 @@ function renderHoldingModal() {
           }" placeholder="Pick a ticker above" disabled>
         </div>
         <div class="field">
-          <label>Quantity</label>
-          <input data-field="quantity" value="${esc(state.quantity)}" inputmode="decimal">
+          <label>Quantity${unit ? ` (${esc(unit)})` : ""}</label>
+          <input data-field="quantity" value="${esc(state.quantity)}" inputmode="decimal" placeholder="${unit ? `Amount in ${esc(unit)}` : ""}">
         </div>
         <div class="field">
           <label>Avg cost (optional, native currency)</label>
@@ -1333,9 +1372,9 @@ function render() {
         <div class="hero-content">
           <div class="kicker">Total value</div>
           <div class="total-usd">${esc(usdSplit.main)}<span class="frac">${esc(usdSplit.frac)}</span></div>
-          ${state.settings.localCurrency !== "USD" ? `<div class="total-local">${esc(formatLocal(t.local))}</div>` : ""}
+          ${state.settings.localCurrency !== "USD" ? `<div class="total-local">${withDimmedDecimals(formatLocal(t.local))}</div>` : ""}
           <div class="delta ${signClass(t.changeUsd)}">
-            <span>${esc(formatSignedUsd(t.changeUsd))} today</span>
+            <span>${withDimmedDecimals(formatSignedUsd(t.changeUsd))} today</span>
             <span>${esc(formatPct(t.changePct))}</span>
             ${
               state.settings.localCurrency !== "USD"
@@ -1348,7 +1387,7 @@ function render() {
             }
             ${
               historySummary
-                ? `<span class="history-change ${historySummary.dir}">${esc(formatSignedUsd(historySummary.change))} · ${esc(formatPct(historySummary.changePct))} since ${esc(historySummary.firstLabel)}</span>`
+                ? `<span class="history-change ${historySummary.dir}">${withDimmedDecimals(formatSignedUsd(historySummary.change))} · ${esc(formatPct(historySummary.changePct))} since ${esc(historySummary.firstLabel)}</span>`
                 : ""
             }
           </div>
@@ -1357,12 +1396,12 @@ function render() {
       <div class="side-stats">
         <div class="stat">
           <div class="stat-label">Bitcoin &amp; crypto</div>
-          <div class="stat-value">${esc(formatUsd(t.btcUsd))}</div>
+          <div class="stat-value">${withDimmedDecimals(formatUsd(t.btcUsd))}</div>
           <div class="stat-sub">${
             t.rows.some((r) => r.crypto)
               ? `${t.rows.filter((r) => r.crypto).length} positions${
                   state.settings.localCurrency !== "USD"
-                    ? ` · ${esc(formatLocal(toLocal(t.btcUsd, state.fx)))}`
+                    ? ` · ${withDimmedDecimals(formatLocal(toLocal(t.btcUsd, state.fx)))}`
                     : ""
                 }`
               : "No crypto yet"
@@ -1370,10 +1409,10 @@ function render() {
         </div>
         <div class="stat">
           <div class="stat-label">Stocks</div>
-          <div class="stat-value">${esc(formatUsd(t.stocksUsd))}</div>
+          <div class="stat-value">${withDimmedDecimals(formatUsd(t.stocksUsd))}</div>
           <div class="stat-sub">${t.rows.filter((r) => !r.crypto).length} positions${
             state.settings.localCurrency !== "USD"
-              ? ` · ${esc(formatLocal(toLocal(t.stocksUsd, state.fx)))}`
+              ? ` · ${withDimmedDecimals(formatLocal(toLocal(t.stocksUsd, state.fx)))}`
               : ""
           }</div>
         </div>
@@ -1400,7 +1439,7 @@ function render() {
                     const c = tagColor(g.tag);
                     return `<button type="button" class="tag-filter-chip${active ? " active" : ""}" data-action="toggle-tag-filter" data-tag="${esc(g.tag)}" style="color:${c.text};border-color:${c.border};background:${active ? c.bgActive : "transparent"}">
                       <span class="tag-filter-name">${esc(g.tag)}</span>
-                      <span class="tag-filter-value" style="background:${c.bg}">${esc(formatUsd(g.valueUsd))}</span>
+                      <span class="tag-filter-value" style="background:${c.bg}">${withDimmedDecimals(formatUsd(g.valueUsd))}</span>
                     </button>`;
                   })(),
               )
