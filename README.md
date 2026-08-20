@@ -14,8 +14,10 @@ npx serve .
 
 ## What it does
 
-- Add stock and crypto tickers with a quantity and (optional) average cost basis.
+- Add stock and crypto tickers with a quantity, an optional average cost basis, and an optional free-text tag (e.g. "Cold storage", "Coinbase", "Nordnet") for where it's held. The same symbol can appear multiple times under different tags — they're tracked as separate lots, not merged, so "BTC on an exchange" and "BTC in cold storage" show as distinct rows while still rolling up into the shared totals.
 - Live-ish price refresh every 30 seconds (Yahoo Finance for stocks, CoinGecko/Binance for crypto), with USD + your chosen local-currency totals, daily change, and P/L when a cost basis is set.
+- Each holding flags itself "stale" if its price hasn't refreshed successfully in a while (4 missed refresh cycles), even if the overall status still says "Live" because other holdings refreshed fine — a per-symbol fetch failure otherwise fails silently.
+- A "Value over time" chart (inline SVG, no charting library) built from one snapshot per calendar day, kept in `localStorage` — needs at least two days of data before a trend line appears.
 - Settings (gear button, top right) let you pick a local currency shown alongside USD (DKK/EUR/GBP/SEK/NOK/USD), a 12/24-hour clock, and a timezone to display the clock/date in — all independent of USD, which is always the base currency everything is computed in.
 - A scrolling "Wire" headline ticker plus a couple of headlines per holding, sourced from Yahoo Finance's news search first, with Google News RSS and a filtered Hacker News search as fallbacks.
 - Everything persists to `localStorage`; no accounts, no sync, no server-side storage.
@@ -49,3 +51,4 @@ Because this is a static page with no backend, price and news data come straight
 - Price/news freshness depends entirely on third-party API availability; there's no caching layer beyond what's needed to avoid a blank UI while offline.
 - The local ticker directory in `app.js` covers common US large-caps/ETFs and a handful of Nordic tickers — anything else falls back to whatever the live Yahoo search (if reachable) or the typed symbol resolves to.
 - Settings (`dashemall.settings` in `localStorage`) only offer a curated set of currencies and timezones, not every IANA zone / ISO currency code.
+- History (`dashemall.history`) is one point per calendar day (whichever value was last recorded that day), capped at 365 points — it's a trend indicator, not an intraday chart.

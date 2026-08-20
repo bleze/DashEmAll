@@ -4,8 +4,11 @@ const HOLDINGS_KEY = "dashemall.holdings";
 const CACHE_KEY = "dashemall.quotesCache";
 const NEWS_KEY = "dashemall.news";
 const SETTINGS_KEY = "dashemall.settings";
+const HISTORY_KEY = "dashemall.history";
+const HISTORY_MAX_DAYS = 365;
 const REFRESH_MS = 30_000;
 const NEWS_MS = 5 * 60_000;
+const STALE_MS = 4 * REFRESH_MS;
 
 const CURRENCY_OPTIONS = [
   { code: "DKK", label: "Danish krone" },
@@ -178,12 +181,14 @@ const bodyEl = document.querySelector("#app-body");
 let lastTapeHtml = null;
 const cache = loadJson(CACHE_KEY);
 const newsCache = loadJson(NEWS_KEY);
+const historyCache = loadJson(HISTORY_KEY);
 
 const state = {
   holdings: loadHoldings(),
   quotes: cache?.quotes || {},
   fx: cache?.fx || {},
   news: newsCache?.news || {},
+  history: Array.isArray(historyCache) ? historyCache : [],
   updatedAt: cache?.updatedAt || null,
   status: "idle",
   error: null,
@@ -195,6 +200,7 @@ const state = {
   selectedName: "",
   quantity: "1",
   costBasis: "",
+  tag: "",
   now: Date.now(),
 };
 
@@ -223,6 +229,7 @@ function loadHoldings() {
       name: String(h.name || h.symbol),
       quantity: Number(h.quantity) || 0,
       costBasis: h.costBasis == null ? null : Number(h.costBasis),
+      tag: h.tag ? String(h.tag).trim() : "",
     }));
 }
 
@@ -791,6 +798,22 @@ function totals() {
   return { usd, local: toLocal(usd, state.fx), changeUsd, changePct, btcUsd, stocksUsd, rows };
 }
 
+// One point per calendar day: repeated refreshes within the same day update
+// that day's point in place (so it always reflects the latest known value)
+// instead of piling up dozens of points from a page left open all day.
+function recordHistory(usd) {
+  const last = state.history[state.history.length - 1];
+  const today = new Date(state.now).toDateString();
+  if (last && new Date(last.ts).toDateString() === today) {
+    last.ts = state.now;
+    last.usd = usd;
+  } else {
+    state.history.push({ ts: state.now, usd });
+    if (state.history.length > HISTORY_MAX_DAYS) state.history.shift();
+  }
+  saveJson(HISTORY_KEY, state.history);
+}
+
 function wireHeadlines() {
   const seen = new Set();
   const items = [];
@@ -843,6 +866,7 @@ function renderTape() {
 function renderHolding(row, allocTotal, hasCost) {
   const q = row.quote;
   const missing = !q;
+  const stale = q && state.now - (q.fetchedAt || 0) > STALE_MS;
   const pct = row.valueUsd / allocTotal;
   const lead = row.headlines[0];
   const rest = row.headlines.slice(1, 2);
@@ -857,8 +881,8 @@ function renderHolding(row, allocTotal, hasCost) {
         <div class="holding-ident">
           <span class="swatch" style="background:${row.color}"></span>
           <div>
-            <div class="sym">${esc(row.holding.symbol)}</div>
-            <div class="name">${esc(q?.name || row.holding.name)}${missing ? " · waiting" : ""}</div>
+            <div class="sym">${esc(row.holding.symbol)}${row.holding.tag ? ` <span class="tag-chip">${esc(row.holding.tag)}</span>` : ""}</div>
+            <div class="name">${esc(q?.name || row.holding.name)}${missing ? " · waiting" : stale ? ` · <span class="stale-flag" title="No successful price update in over ${Math.round(STALE_MS / 60000)} minutes">stale · ${esc(relativeAgo(q.fetchedAt, state.now))}</span>` : ""}</div>
           </div>
         </div>
         <div class="holding-metrics">
@@ -985,6 +1009,11 @@ function renderHoldingModal() {
           <label>Avg cost (optional, native currency)</label>
           <input data-field="cost" value="${esc(state.costBasis)}" inputmode="decimal" placeholder="Leave blank to skip P/L">
         </div>
+        <div class="field">
+          <label>Tag / location (optional)</label>
+          <input data-field="tag" value="${esc(state.tag)}" list="tag-options" placeholder="Cold storage, Coinbase, Nordnet…">
+          <datalist id="tag-options">${[...new Set(state.holdings.map((h) => h.tag).filter(Boolean))].map((t) => `<option value="${esc(t)}">`).join("")}</datalist>
+        </div>
         <div class="dialog-actions">
           ${editing ? `<button type="button" class="btn btn-danger" data-action="remove">Remove</button>` : ""}
           <button type="button" class="btn btn-ghost" data-action="close">Cancel</button>
@@ -992,6 +1021,48 @@ function renderHoldingModal() {
         </div>
       </form>
     </div>
+  `;
+}
+
+function renderHistoryChart() {
+  const points = state.history;
+  if (points.length < 2) {
+    return `
+      <section class="history">
+        <div class="history-head"><h2>Value over time</h2></div>
+        <div class="history-empty">One point is recorded per day - check back tomorrow to see a trend.</div>
+      </section>
+    `;
+  }
+  const values = points.map((p) => p.usd);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const W = 600;
+  const H = 120;
+  const PAD = 10;
+  const coords = points.map((p, i) => {
+    const x = (i / (points.length - 1)) * W;
+    const y = H - PAD - ((p.usd - min) / range) * (H - PAD * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const linePoints = coords.join(" ");
+  const areaPoints = `0,${H} ${linePoints} ${W},${H}`;
+  const change = values[values.length - 1] - values[0];
+  const changePct = values[0] ? (change / values[0]) * 100 : 0;
+  const dir = signClass(change);
+  const firstLabel = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(points[0].ts);
+  return `
+    <section class="history">
+      <div class="history-head">
+        <h2>Value over time</h2>
+        <div class="history-change ${dir}">${esc(formatSignedUsd(change))} · ${esc(formatPct(changePct))} since ${esc(firstLabel)}</div>
+      </div>
+      <svg class="history-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+        <polygon class="hist-area ${dir}" points="${areaPoints}"></polygon>
+        <polyline class="hist-line ${dir}" points="${linePoints}"></polyline>
+      </svg>
+    </section>
   `;
 }
 
@@ -1073,6 +1144,7 @@ function render() {
         </div>
       </div>
     </section>
+    ${renderHistoryChart()}
   `;
   updateTape();
   bodyEl.innerHTML = `
@@ -1132,6 +1204,7 @@ function openAdd(prefill) {
   state.selectedName = prefill?.name || "";
   state.quantity = "1";
   state.costBasis = "";
+  state.tag = "";
   render();
   focusField(prefill ? "quantity" : "search");
 }
@@ -1144,6 +1217,7 @@ function openEdit(id) {
   state.selectedName = holding.name;
   state.quantity = String(holding.quantity);
   state.costBasis = holding.costBasis == null ? "" : String(holding.costBasis);
+  state.tag = holding.tag || "";
   render();
   focusField("quantity");
 }
@@ -1172,9 +1246,10 @@ async function refreshQuotes() {
     await Promise.all(
       symbols.map(async (symbol) => {
         try {
-          quotes[symbol] = await quoteSymbol(symbol);
+          quotes[symbol] = { ...(await quoteSymbol(symbol)), fetchedAt: Date.now() };
         } catch {
-          // keep last cached quote
+          // keep last cached quote (and its old fetchedAt, so it can be
+          // flagged stale even while the overall refresh reports "live")
         }
       }),
     );
@@ -1188,6 +1263,7 @@ async function refreshQuotes() {
       if (q) holding.name = q.name;
     }
     persist();
+    if (state.holdings.length) recordHistory(totals().usd);
   } catch (err) {
     state.status = "error";
     state.error = err.message || "Could not refresh prices";
@@ -1263,7 +1339,11 @@ function addHolding() {
   const symbol = (state.selectedSymbol || state.searchQ).trim().toUpperCase();
   const qty = parseQty(state.quantity);
   if (!symbol || Number.isNaN(qty) || qty === 0) return;
-  const existing = state.holdings.find((h) => h.symbol === symbol);
+  const tag = state.tag.trim();
+  // Keyed by symbol+tag, not symbol alone, so the same asset held in two
+  // places (e.g. BTC on an exchange vs. BTC in cold storage) stays as two
+  // separate rows instead of being merged into one.
+  const existing = state.holdings.find((h) => h.symbol === symbol && (h.tag || "") === tag);
   const cost = state.costBasis.trim() === "" ? null : parseQty(state.costBasis);
   if (existing) {
     existing.quantity += qty;
@@ -1275,6 +1355,7 @@ function addHolding() {
       name: state.selectedName || symbol,
       quantity: qty,
       costBasis: cost != null && !Number.isNaN(cost) ? cost : null,
+      tag,
     });
   }
   persist();
@@ -1292,6 +1373,7 @@ function saveEdit() {
   holding.quantity = qty;
   const cost = state.costBasis.trim() === "" ? null : parseQty(state.costBasis);
   holding.costBasis = cost != null && !Number.isNaN(cost) ? cost : null;
+  holding.tag = state.tag.trim();
   persist();
   closeModal();
 }
@@ -1353,6 +1435,7 @@ root.addEventListener("input", (event) => {
   const field = event.target.dataset.field;
   if (field === "quantity") state.quantity = event.target.value;
   if (field === "cost") state.costBasis = event.target.value;
+  if (field === "tag") state.tag = event.target.value;
   if (field === "search") {
     state.searchQ = event.target.value;
     clearTimeout(searchTimer);
