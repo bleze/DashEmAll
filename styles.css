@@ -502,7 +502,29 @@ button {
 
 .actions {
   display: flex;
+  align-items: center;
   gap: 8px;
+}
+
+.sort-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.sort-control select {
+  background: var(--card-2);
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+  padding: 7px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 .btn {
@@ -938,6 +960,27 @@ button {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 8px;
+}
+
+.type-toggle {
+  display: flex;
+  gap: 6px;
+}
+
+.type-btn {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.type-btn.active {
+  border-color: var(--brass);
+  color: var(--brass);
+  background: var(--brass-dim);
 }
 
 .dialog-backdrop {

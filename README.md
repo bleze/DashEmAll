@@ -15,7 +15,9 @@ npx serve .
 ## What it does
 
 - Add stock and crypto tickers with a quantity, an optional average cost basis, and an optional free-text tag for where it's held (e.g. "Cold storage", "Coinbase", "Nordnet"). The same symbol can appear multiple times under different tags, tracked as separate lots that still roll up into the shared totals.
+- The add dialog has a Ticker/Cash type toggle. Cash holdings are a currency (DKK/EUR/GBP/SEK/NOK/USD) and an amount rather than a ticker — no live quote, no cost basis, no news/sparkline (its card says so instead of the usual "Listening for headlines…"). They roll into the same USD/local totals as everything else, and get their own "Cash" stat card once you have one.
 - A per-tag value breakdown sits above the holdings list whenever more than one tag is in use. Clicking a tag filters the list to it (multiple tags OR together); with none selected, everything shows. Each tag gets a color derived from its text, used consistently everywhere it appears.
+- A Sort control next to Refresh/Add holding orders the list by Value (default), Today's %, P/L, or Symbol. The choice persists across reloads.
 - Live price refresh every 30 seconds (Yahoo Finance for stocks, CoinGecko/Binance for crypto), with totals in USD plus your chosen local currency, daily change, and profit/loss when a cost basis is set.
 - Each holding card shows quantity, price, USD/local value, and P/L, plus a faded 30-day price sparkline behind the card and the day's % change next to the symbol. A holding flags itself "stale" if its price hasn't refreshed in a while.
 - The total-value card shows a value-over-time trend line and a "+$X · +Y% since &lt;date&gt;" figure, built from one snapshot per day.
@@ -41,6 +43,7 @@ Plain HTML/CSS/JS, no framework, no build step:
 - **Sparkline history** (per-holding 30-day price line) — fetched separately from the price quote, on a 6-hour cadence rather than every 30 seconds.
 - **News** — tried in order per holding: Yahoo Finance's news search, then Google News RSS, then Hacker News (Algolia), filtered to results that actually mention the company/asset and are less than 14 days old.
 - **FX rates** — open.er-api.com, with frankfurter.dev as a fallback.
+- **Cash holdings** — no data source at all. A synthetic quote (`price: 1` in the chosen currency) plugs into the same value/P&L/history math as everything else, with no network call.
 
 ### Known limitations
 

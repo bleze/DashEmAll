@@ -41,7 +41,13 @@ const TIMEZONE_OPTIONS = [
   { value: "Asia/Tokyo", label: "Tokyo" },
   { value: "UTC", label: "UTC" },
 ];
-const DEFAULT_SETTINGS = { localCurrency: "DKK", timeFormat: "auto", timezone: "auto" };
+const SORT_OPTIONS = [
+  { value: "value", label: "Value" },
+  { value: "changePct", label: "Today's %" },
+  { value: "pnl", label: "P/L" },
+  { value: "symbol", label: "Symbol" },
+];
+const DEFAULT_SETTINGS = { localCurrency: "DKK", timeFormat: "auto", timezone: "auto", sortBy: "value" };
 
 const CRYPTO = {
   "BTC-USD": { id: "bitcoin", name: "Bitcoin" },
@@ -227,6 +233,7 @@ const state = {
   costBasis: "",
   tag: "",
   tagFilter: new Set(),
+  addMode: "ticker",
   now: Date.now(),
 };
 
@@ -287,6 +294,7 @@ function sanitizeSettings(saved) {
     timezone: TIMEZONE_OPTIONS.some((t) => t.value === saved.timezone)
       ? saved.timezone
       : DEFAULT_SETTINGS.timezone,
+    sortBy: SORT_OPTIONS.some((s) => s.value === saved.sortBy) ? saved.sortBy : DEFAULT_SETTINGS.sortBy,
   };
 }
 
@@ -438,7 +446,20 @@ function tagColor(tag) {
   };
 }
 
+// Cash holdings use a synthetic symbol "CASH-<code>" - no ticker, no live
+// quote, just an amount in a currency. Checked before the crypto/USD-suffix
+// regex everywhere, since "CASH-USD" would otherwise match that pattern.
+function cashCurrency(symbol) {
+  const m = /^CASH-([A-Z]{3})$/.exec(symbol);
+  return m ? m[1] : null;
+}
+
+function isCash(symbol) {
+  return Boolean(cashCurrency(symbol));
+}
+
 function isCrypto(quote, symbol) {
+  if (isCash(symbol)) return false;
   if (CRYPTO[symbol]) return true;
   if (quote?.quoteType === "CRYPTOCURRENCY") return true;
   return /-(USD|USDT)$/.test(symbol);
@@ -626,7 +647,28 @@ async function quoteBinanceBtc() {
   };
 }
 
+// No ticker, no network call - 1 unit always equals 1 unit of that currency.
+// toUsd()/toLocal() already know how to convert any currency via state.fx,
+// so a synthetic "price: 1" quote is all that's needed to plug into every
+// existing value/P&L/history calculation with no special-casing there.
+async function quoteCash(symbol) {
+  const code = cashCurrency(symbol);
+  return {
+    symbol,
+    name: `Cash (${code})`,
+    price: 1,
+    currency: code,
+    change: 0,
+    changePercent: 0,
+    previousClose: 1,
+    quoteType: "CASH",
+    marketState: "REGULAR",
+    exchange: "Cash",
+  };
+}
+
 async function quoteSymbol(symbol) {
+  if (isCash(symbol)) return quoteCash(symbol);
   if (cryptoMeta(symbol) || /-(USD|USDT)$/.test(symbol)) {
     try {
       return await quoteCrypto(symbol);
@@ -659,6 +701,7 @@ async function fetchCryptoSparkline(symbol) {
 }
 
 async function fetchSparkline(symbol) {
+  if (isCash(symbol)) return [];
   if (cryptoMeta(symbol) || /-(USD|USDT)$/.test(symbol)) return fetchCryptoSparkline(symbol);
   return fetchStockSparkline(symbol);
 }
@@ -843,6 +886,7 @@ function freshHeadlines(items) {
 }
 
 async function newsForHolding(holding) {
+  if (isCash(holding.symbol)) return [];
   const quote = state.quotes[holding.symbol];
   const name = quote?.name || holding.name;
   try {
@@ -875,6 +919,7 @@ function totals() {
   let changeUsd = 0;
   let btcUsd = 0;
   let stocksUsd = 0;
+  let cashUsd = 0;
   const rows = state.holdings.map((holding, index) => {
     const quote = state.quotes[holding.symbol];
     const valueUsd = holdingValueUsd(holding, quote);
@@ -882,7 +927,9 @@ function totals() {
     usd += valueUsd;
     changeUsd += dayUsd;
     const crypto = isCrypto(quote, holding.symbol);
-    if (crypto) btcUsd += valueUsd;
+    const cash = isCash(holding.symbol);
+    if (cash) cashUsd += valueUsd;
+    else if (crypto) btcUsd += valueUsd;
     else stocksUsd += valueUsd;
     const pnlUsd =
       quote && holding.costBasis != null
@@ -894,13 +941,14 @@ function totals() {
       valueUsd,
       dayUsd,
       crypto,
+      cash,
       color: colorFor(holding.symbol, index),
       pnlUsd,
       headlines: state.news[holding.symbol] || [],
     };
   });
   const changePct = usd - changeUsd === 0 ? 0 : (changeUsd / (usd - changeUsd)) * 100;
-  return { usd, local: toLocal(usd, state.fx), changeUsd, changePct, btcUsd, stocksUsd, rows };
+  return { usd, local: toLocal(usd, state.fx), changeUsd, changePct, btcUsd, stocksUsd, cashUsd, rows };
 }
 
 function tagBreakdown(rows) {
@@ -924,6 +972,22 @@ function tagBreakdown(rows) {
 function visibleRows(rows) {
   if (!state.tagFilter.size) return rows;
   return rows.filter((row) => state.tagFilter.has(row.holding.tag || "Untagged"));
+}
+
+// Missing data (no quote yet, no cost basis) sinks to the bottom of a
+// descending sort rather than jumping to the top on a null/undefined compare.
+function sortRows(rows, sortBy) {
+  const sorted = [...rows];
+  if (sortBy === "symbol") {
+    sorted.sort((a, b) => a.holding.symbol.localeCompare(b.holding.symbol));
+  } else if (sortBy === "changePct") {
+    sorted.sort((a, b) => (b.quote?.changePercent ?? -Infinity) - (a.quote?.changePercent ?? -Infinity));
+  } else if (sortBy === "pnl") {
+    sorted.sort((a, b) => (b.pnlUsd ?? -Infinity) - (a.pnlUsd ?? -Infinity));
+  } else {
+    sorted.sort((a, b) => b.valueUsd - a.valueUsd);
+  }
+  return sorted;
 }
 
 // One point per calendar day: repeated refreshes within the same day update
@@ -1142,7 +1206,9 @@ function renderHolding(row, allocTotal, hasCost) {
         ${
           lead
             ? `${renderNewsItem(lead, false)}${rest.map((item) => renderNewsItem(item, true)).join("")}`
-            : `<div class="news-empty">Listening for headlines…</div>`
+            : row.cash
+              ? `<div class="news-empty">No wire for cash holdings.</div>`
+              : `<div class="news-empty">Listening for headlines…</div>`
         }
       </div>
     </article>
@@ -1225,15 +1291,38 @@ function renderHoldingModal() {
   const validQty = !Number.isNaN(qty) && qty !== 0;
   const canSubmit = editing ? validQty : symbol !== "" && validQty;
   const unit = quantityUnit(editing ? current?.symbol : symbol.toUpperCase(), true);
+  const isCashMode = !editing && state.addMode === "cash";
+  const editingCash = Boolean(editing && current && isCash(current.symbol));
+  const cash = isCashMode || editingCash;
+  const qtyLabel = cash ? "Amount" : `Quantity${unit ? ` (${esc(unit)})` : ""}`;
+  const qtyPlaceholder = cash ? "" : unit ? `Amount in ${esc(unit)}` : "";
   return `
     <div class="dialog-backdrop">
       <form class="dialog" data-action="${editing ? "save-edit" : "save-add"}">
         <h3>${editing ? "Edit holding" : "Add holding"}</h3>
-        <p>${editing ? "Update quantity or average cost." : "Type a ticker, then how many you hold. Saved in this browser."}</p>
+        <p>${editing ? "Update quantity or average cost." : "Pick a ticker or a cash amount, then how much you hold. Saved in this browser."}</p>
+        ${
+          !editing
+            ? `<div class="field">
+                <label>Type</label>
+                <div class="type-toggle">
+                  <button type="button" class="type-btn ${state.addMode !== "cash" ? "active" : ""}" data-action="set-add-mode" data-mode="ticker">Ticker</button>
+                  <button type="button" class="type-btn ${state.addMode === "cash" ? "active" : ""}" data-action="set-add-mode" data-mode="cash">Cash</button>
+                </div>
+              </div>`
+            : ""
+        }
         ${
           editing
-            ? `<div class="field"><label>Symbol</label><input value="${esc(current?.symbol || "")}" disabled></div>`
-            : `<div class="field field-combo">
+            ? `<div class="field"><label>${editingCash ? "Currency" : "Symbol"}</label><input value="${esc(editingCash ? cashCurrency(current.symbol) : current?.symbol || "")}" disabled></div>`
+            : isCashMode
+              ? `<div class="field">
+                  <label>Currency</label>
+                  <select data-field="cash-currency">
+                    ${CURRENCY_OPTIONS.map((c) => `<option value="${esc(c.code)}" ${state.selectedSymbol === `CASH-${c.code}` ? "selected" : ""}>${esc(c.code)} — ${esc(c.label)}</option>`).join("")}
+                  </select>
+                </div>`
+              : `<div class="field field-combo">
                 <label>Search ticker</label>
                 <input data-field="search" value="${esc(state.searchQ)}" placeholder="AAPL, BTC-USD, NOVO-B.CO" autocomplete="off">
                 ${
@@ -1250,22 +1339,30 @@ function renderHoldingModal() {
                 }
               </div>`
         }
+        ${
+          !cash
+            ? `<div class="field">
+                <label>Selected</label>
+                <input value="${
+                  state.selectedSymbol || current
+                    ? `${esc(state.selectedSymbol || current?.symbol || "")} · ${esc(state.selectedName || current?.name || "")}`
+                    : ""
+                }" placeholder="Pick a ticker above" disabled>
+              </div>`
+            : ""
+        }
         <div class="field">
-          <label>Selected</label>
-          <input value="${
-            state.selectedSymbol || current
-              ? `${esc(state.selectedSymbol || current?.symbol || "")} · ${esc(state.selectedName || current?.name || "")}`
-              : ""
-          }" placeholder="Pick a ticker above" disabled>
+          <label>${qtyLabel}</label>
+          <input data-field="quantity" value="${esc(state.quantity)}" inputmode="decimal" placeholder="${qtyPlaceholder}">
         </div>
-        <div class="field">
-          <label>Quantity${unit ? ` (${esc(unit)})` : ""}</label>
-          <input data-field="quantity" value="${esc(state.quantity)}" inputmode="decimal" placeholder="${unit ? `Amount in ${esc(unit)}` : ""}">
-        </div>
-        <div class="field">
-          <label>Avg cost (optional, native currency)</label>
-          <input data-field="cost" value="${esc(state.costBasis)}" inputmode="decimal" placeholder="Leave blank to skip P/L">
-        </div>
+        ${
+          !cash
+            ? `<div class="field">
+                <label>Avg cost (optional, native currency)</label>
+                <input data-field="cost" value="${esc(state.costBasis)}" inputmode="decimal" placeholder="Leave blank to skip P/L">
+              </div>`
+            : ""
+        }
         <div class="field">
           <label>Tag / location (optional)</label>
           <input data-field="tag" value="${esc(state.tag)}" placeholder="Cold storage, Coinbase, Nordnet…">
@@ -1346,7 +1443,7 @@ function render() {
   const hasCost = state.holdings.some((h) => h.costBasis != null);
   const allocTotal = t.usd || 1;
   const tagGroups = tagBreakdown(t.rows);
-  const shownRows = visibleRows(t.rows);
+  const shownRows = sortRows(visibleRows(t.rows), state.settings.sortBy);
   const historySummary = computeHistorySummary();
   headEl.innerHTML = `
     <header class="masthead">
@@ -1410,12 +1507,25 @@ function render() {
         <div class="stat">
           <div class="stat-label">Stocks</div>
           <div class="stat-value">${withDimmedDecimals(formatUsd(t.stocksUsd))}</div>
-          <div class="stat-sub">${t.rows.filter((r) => !r.crypto).length} positions${
+          <div class="stat-sub">${t.rows.filter((r) => !r.crypto && !r.cash).length} positions${
             state.settings.localCurrency !== "USD"
               ? ` · ${withDimmedDecimals(formatLocal(toLocal(t.stocksUsd, state.fx)))}`
               : ""
           }</div>
         </div>
+        ${
+          t.rows.some((r) => r.cash)
+            ? `<div class="stat">
+                <div class="stat-label">Cash</div>
+                <div class="stat-value">${withDimmedDecimals(formatUsd(t.cashUsd))}</div>
+                <div class="stat-sub">${t.rows.filter((r) => r.cash).length} positions${
+                  state.settings.localCurrency !== "USD"
+                    ? ` · ${withDimmedDecimals(formatLocal(toLocal(t.cashUsd, state.fx)))}`
+                    : ""
+                }</div>
+              </div>`
+            : ""
+        }
       </div>
     </section>
   `;
@@ -1425,6 +1535,12 @@ function render() {
       <div class="panel-head">
         <h2>Holdings</h2>
         <div class="actions">
+          <label class="sort-control">
+            Sort
+            <select data-field="sortBy">
+              ${SORT_OPTIONS.map((o) => `<option value="${esc(o.value)}" ${o.value === state.settings.sortBy ? "selected" : ""}>${esc(o.label)}</option>`).join("")}
+            </select>
+          </label>
           <button class="btn btn-ghost" data-action="refresh">Refresh</button>
           <button class="btn btn-primary" data-action="add">Add holding</button>
         </div>
@@ -1503,6 +1619,7 @@ function sanitizeNumericInput(value) {
 
 function openAdd(prefill) {
   state.modal = { kind: "add" };
+  state.addMode = "ticker";
   state.searchQ = prefill?.symbol || "";
   state.searchResults = [];
   state.selectedSymbol = prefill?.symbol || "";
@@ -1747,6 +1864,21 @@ root.addEventListener("click", (event) => {
       state.tag = actionEl.dataset.tag || "";
       render();
     }
+    if (action === "set-add-mode") {
+      state.addMode = actionEl.dataset.mode || "ticker";
+      if (state.addMode === "cash") {
+        const code = state.settings.localCurrency !== "USD" ? state.settings.localCurrency : CURRENCY_OPTIONS[0].code;
+        state.selectedSymbol = `CASH-${code}`;
+        state.selectedName = `Cash (${code})`;
+        state.costBasis = "";
+      } else {
+        state.selectedSymbol = "";
+        state.selectedName = "";
+        state.searchQ = "";
+      }
+      render();
+      focusField(state.addMode === "cash" ? "quantity" : "search");
+    }
     if (action === "pick") {
       state.selectedSymbol = actionEl.dataset.symbol || "";
       state.selectedName = actionEl.dataset.name || "";
@@ -1826,7 +1958,13 @@ root.addEventListener("change", (event) => {
     if (file) importDataFromFile(file);
     return;
   }
-  if (field !== "localCurrency" && field !== "timeFormat" && field !== "timezone") return;
+  if (field === "cash-currency") {
+    state.selectedSymbol = `CASH-${event.target.value}`;
+    state.selectedName = `Cash (${event.target.value})`;
+    render();
+    return;
+  }
+  if (field !== "localCurrency" && field !== "timeFormat" && field !== "timezone" && field !== "sortBy") return;
   state.settings[field] = event.target.value;
   persistSettings();
   render();
