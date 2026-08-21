@@ -5,6 +5,7 @@ const CACHE_KEY = "dashemall.quotesCache";
 const NEWS_KEY = "dashemall.news";
 const SETTINGS_KEY = "dashemall.settings";
 const HISTORY_KEY = "dashemall.history";
+const PRIVACY_KEY = "dashemall.privacy";
 const HISTORY_MAX_DAYS = 365;
 const REFRESH_MS = 30_000;
 const NEWS_MS = 5 * 60_000;
@@ -234,7 +235,7 @@ const state = {
   tag: "",
   tagFilter: new Set(),
   addMode: "ticker",
-  privacy: false,
+  privacy: Boolean(loadJson(PRIVACY_KEY)),
   capturing: false,
   now: Date.now(),
 };
@@ -465,8 +466,23 @@ function isCash(symbol) {
   return Boolean(cashCurrency(symbol));
 }
 
+// "Other" holdings are manually-valued possessions (property, vehicles,
+// collectibles) that also have no live quote - same synthetic-symbol trick
+// as Cash ("OTHER-<code>"), but the quantity field holds a current value the
+// user updates by hand, and a per-holding name (not derivable from the
+// symbol, since several holdings can share one currency) carries the label.
+function otherCurrency(symbol) {
+  const m = /^OTHER-([A-Z]{3})$/.exec(symbol);
+  return m ? m[1] : null;
+}
+
+function isOther(symbol) {
+  return Boolean(otherCurrency(symbol));
+}
+
 function isCrypto(quote, symbol) {
   if (isCash(symbol)) return false;
+  if (isOther(symbol)) return false;
   if (CRYPTO[symbol]) return true;
   if (quote?.quoteType === "CRYPTOCURRENCY") return true;
   return /-(USD|USDT)$/.test(symbol);
@@ -677,8 +693,28 @@ async function quoteCash(symbol) {
   };
 }
 
+// Same synthetic "price: 1" trick as quoteCash(). No `name` field, since
+// this quote is shared across every holding with this symbol (e.g. two
+// different possessions both valued in DKK) - each holding's own `name`
+// (the user-typed label) is what the UI actually shows.
+async function quoteOther(symbol) {
+  const code = otherCurrency(symbol);
+  return {
+    symbol,
+    price: 1,
+    currency: code,
+    change: 0,
+    changePercent: 0,
+    previousClose: 1,
+    quoteType: "OTHER",
+    marketState: "REGULAR",
+    exchange: "Other",
+  };
+}
+
 async function quoteSymbol(symbol) {
   if (isCash(symbol)) return quoteCash(symbol);
+  if (isOther(symbol)) return quoteOther(symbol);
   if (cryptoMeta(symbol) || /-(USD|USDT)$/.test(symbol)) {
     try {
       return await quoteCrypto(symbol);
@@ -710,7 +746,7 @@ async function fetchCryptoSparkline(symbol) {
 }
 
 async function fetchSparkline(symbol) {
-  if (isCash(symbol)) return [];
+  if (isCash(symbol) || isOther(symbol)) return [];
   if (cryptoMeta(symbol) || /-(USD|USDT)$/.test(symbol)) return fetchCryptoSparkline(symbol);
   return fetchStockSparkline(symbol);
 }
@@ -895,7 +931,7 @@ function freshHeadlines(items) {
 }
 
 async function newsForHolding(holding) {
-  if (isCash(holding.symbol)) return [];
+  if (isCash(holding.symbol) || isOther(holding.symbol)) return [];
   const quote = state.quotes[holding.symbol];
   const name = quote?.name || holding.name;
   try {
@@ -929,6 +965,7 @@ function totals() {
   let btcUsd = 0;
   let stocksUsd = 0;
   let cashUsd = 0;
+  let otherUsd = 0;
   const rows = state.holdings.map((holding, index) => {
     const quote = state.quotes[holding.symbol];
     const valueUsd = holdingValueUsd(holding, quote);
@@ -937,12 +974,17 @@ function totals() {
     changeUsd += dayUsd;
     const crypto = isCrypto(quote, holding.symbol);
     const cash = isCash(holding.symbol);
+    const other = isOther(holding.symbol);
     if (cash) cashUsd += valueUsd;
+    else if (other) otherUsd += valueUsd;
     else if (crypto) btcUsd += valueUsd;
     else stocksUsd += valueUsd;
+    // Other holdings' quantity IS the current value (no share count), so
+    // costBasis is stored as a lump total, not a per-unit price - unlike
+    // tickers, it isn't multiplied by quantity here.
     const pnlUsd =
       quote && holding.costBasis != null
-        ? valueUsd - toUsd(holding.costBasis * holding.quantity, quote.currency, state.fx)
+        ? valueUsd - toUsd(other ? holding.costBasis : holding.costBasis * holding.quantity, quote.currency, state.fx)
         : null;
     return {
       holding,
@@ -951,13 +993,15 @@ function totals() {
       dayUsd,
       crypto,
       cash,
+      other,
+      manual: cash || other,
       color: colorFor(holding.symbol, index),
       pnlUsd,
       headlines: state.news[holding.symbol] || [],
     };
   });
   const changePct = usd - changeUsd === 0 ? 0 : (changeUsd / (usd - changeUsd)) * 100;
-  return { usd, local: toLocal(usd, state.fx), changeUsd, changePct, btcUsd, stocksUsd, cashUsd, rows };
+  return { usd, local: toLocal(usd, state.fx), changeUsd, changePct, btcUsd, stocksUsd, cashUsd, otherUsd, rows };
 }
 
 // Same label -> value -> local-currency pattern used everywhere else, plus
@@ -1194,9 +1238,9 @@ function renderHolding(row, allocTotal, hasCost) {
                     })()
                   : ""
               }</div>
-              ${q && !row.cash ? `<span class="pill ${signClass(row.dayUsd)}">${esc(formatPct(q.changePercent))}</span>` : ""}
+              ${q && !row.manual ? `<span class="pill ${signClass(row.dayUsd)}">${esc(formatPct(q.changePercent))}</span>` : ""}
             </div>
-            <div class="name">${esc(q?.name || row.holding.name)}${missing ? " · waiting" : stale ? ` · <span class="stale-flag" title="No successful price update in over ${Math.round(STALE_MS / 60000)} minutes">stale · ${esc(relativeAgo(q.fetchedAt, state.now))}</span>` : ""}</div>
+            <div class="name">${esc(q?.name || row.holding.name || row.holding.symbol)}${missing ? " · waiting" : stale ? ` · <span class="stale-flag" title="No successful price update in over ${Math.round(STALE_MS / 60000)} minutes">stale · ${esc(relativeAgo(q.fetchedAt, state.now))}</span>` : ""}</div>
           </div>
         </div>
         <div class="holding-metrics">
@@ -1208,7 +1252,7 @@ function renderHolding(row, allocTotal, hasCost) {
           </div>
           <div>
             <div class="metric-label">Price</div>
-            <div class="num">${q && !row.cash ? withDimmedDecimals(formatPrice(q.price, q.currency)) : "—"}</div>
+            <div class="num">${q && !row.manual ? withDimmedDecimals(formatPrice(q.price, q.currency)) : "—"}</div>
             ${convertedPrice ? `<div class="name">${withDimmedDecimals(convertedPrice)}</div>` : ""}
           </div>
           <div>
@@ -1239,7 +1283,9 @@ function renderHolding(row, allocTotal, hasCost) {
             ? `${renderNewsItem(lead, false)}${rest.map((item) => renderNewsItem(item, true)).join("")}`
             : row.cash
               ? `<div class="news-empty">No wire for cash holdings.</div>`
-              : `<div class="news-empty">Listening for headlines…</div>`
+              : row.other
+                ? `<div class="news-empty">No wire for this holding.</div>`
+                : `<div class="news-empty">Listening for headlines…</div>`
         }
       </div>
     </article>
@@ -1329,32 +1375,46 @@ function renderHoldingModal() {
   const symbol = (state.selectedSymbol || state.searchQ).trim();
   const qty = parseQty(state.quantity);
   const validQty = !Number.isNaN(qty) && qty !== 0;
-  const canSubmit = editing ? validQty : symbol !== "" && validQty;
-  const unit = quantityUnit(editing ? current?.symbol : symbol.toUpperCase(), true);
   const isCashMode = !editing && state.addMode === "cash";
+  const isOtherMode = !editing && state.addMode === "other";
   const editingCash = Boolean(editing && current && isCash(current.symbol));
+  const editingOther = Boolean(editing && current && isOther(current.symbol));
   const cash = isCashMode || editingCash;
-  const qtyLabel = cash ? "Amount" : `Quantity${unit ? ` (${esc(unit)})` : ""}`;
-  const qtyPlaceholder = cash ? "" : unit ? `Amount in ${esc(unit)}` : "";
+  const other = isOtherMode || editingOther;
+  const nameOk = !other || (state.selectedName || "").trim() !== "";
+  const canSubmit = editing ? validQty && nameOk : symbol !== "" && validQty && nameOk;
+  const unit = quantityUnit(editing ? current?.symbol : symbol.toUpperCase(), true);
+  const qtyLabel = cash ? "Amount" : other ? "Current value" : `Quantity${unit ? ` (${esc(unit)})` : ""}`;
+  const qtyPlaceholder = cash || other ? "" : unit ? `Amount in ${esc(unit)}` : "";
+  const costLabel = other ? "Original cost (optional, total, native currency)" : "Avg cost (optional, native currency)";
   return `
     <div class="dialog-backdrop">
       <form class="dialog" data-action="${editing ? "save-edit" : "save-add"}">
         <h3>${editing ? "Edit holding" : "Add holding"}</h3>
-        <p>${editing ? "Update quantity or average cost." : "Pick a ticker or a cash amount, then how much you hold. Saved in this browser."}</p>
+        <p>${editing ? "Update quantity or average cost." : "Pick a ticker, a cash amount, or describe another asset, then how much it's worth. Saved in this browser."}</p>
         ${
           !editing
             ? `<div class="field">
                 <label>Type</label>
                 <div class="type-toggle">
-                  <button type="button" class="type-btn ${state.addMode !== "cash" ? "active" : ""}" data-action="set-add-mode" data-mode="ticker">Ticker</button>
+                  <button type="button" class="type-btn ${state.addMode === "ticker" ? "active" : ""}" data-action="set-add-mode" data-mode="ticker">Ticker</button>
                   <button type="button" class="type-btn ${state.addMode === "cash" ? "active" : ""}" data-action="set-add-mode" data-mode="cash">Cash</button>
+                  <button type="button" class="type-btn ${state.addMode === "other" ? "active" : ""}" data-action="set-add-mode" data-mode="other">Other</button>
                 </div>
               </div>`
             : ""
         }
         ${
+          isOtherMode || editingOther
+            ? `<div class="field">
+                <label>Name</label>
+                <input data-field="other-name" value="${esc(state.selectedName || "")}" placeholder="Summer house, 1967 Mustang, Rolex…" autocomplete="off">
+              </div>`
+            : ""
+        }
+        ${
           editing
-            ? `<div class="field"><label>${editingCash ? "Currency" : "Symbol"}</label><input value="${esc(editingCash ? cashCurrency(current.symbol) : current?.symbol || "")}" disabled></div>`
+            ? `<div class="field"><label>${editingCash || editingOther ? "Currency" : "Symbol"}</label><input value="${esc(editingCash ? cashCurrency(current.symbol) : editingOther ? otherCurrency(current.symbol) : current?.symbol || "")}" disabled></div>`
             : isCashMode
               ? `<div class="field">
                   <label>Currency</label>
@@ -1362,7 +1422,14 @@ function renderHoldingModal() {
                     ${CURRENCY_OPTIONS.map((c) => `<option value="${esc(c.code)}" ${state.selectedSymbol === `CASH-${c.code}` ? "selected" : ""}>${esc(c.code)} — ${esc(c.label)}</option>`).join("")}
                   </select>
                 </div>`
-              : `<div class="field field-combo">
+              : isOtherMode
+                ? `<div class="field">
+                    <label>Currency</label>
+                    <select data-field="other-currency">
+                      ${CURRENCY_OPTIONS.map((c) => `<option value="${esc(c.code)}" ${state.selectedSymbol === `OTHER-${c.code}` ? "selected" : ""}>${esc(c.code)} — ${esc(c.label)}</option>`).join("")}
+                    </select>
+                  </div>`
+                : `<div class="field field-combo">
                 <label>Search ticker</label>
                 <input data-field="search" value="${esc(state.searchQ)}" placeholder="AAPL, BTC-USD, NOVO-B.CO" autocomplete="off">
                 ${
@@ -1380,7 +1447,7 @@ function renderHoldingModal() {
               </div>`
         }
         ${
-          !cash
+          !cash && !other
             ? `<div class="field">
                 <label>Selected</label>
                 <input value="${
@@ -1398,7 +1465,7 @@ function renderHoldingModal() {
         ${
           !cash
             ? `<div class="field">
-                <label>Avg cost (optional, native currency)</label>
+                <label>${costLabel}</label>
                 <input data-field="cost" value="${esc(state.costBasis)}" inputmode="decimal" placeholder="Leave blank to skip P/L">
               </div>`
             : ""
@@ -1538,10 +1605,15 @@ function render() {
       </div>
       <div class="side-stats">
         ${renderStatCard("🪙 Bitcoin &amp; crypto", t.btcUsd, t.rows.filter((r) => r.crypto).length, "No crypto yet", allocTotal)}
-        ${renderStatCard("📈 Stocks", t.stocksUsd, t.rows.filter((r) => !r.crypto && !r.cash).length, "No stocks yet", allocTotal)}
+        ${renderStatCard("📈 Stocks", t.stocksUsd, t.rows.filter((r) => !r.crypto && !r.cash && !r.other).length, "No stocks yet", allocTotal)}
         ${
           t.rows.some((r) => r.cash)
             ? renderStatCard("💵 Cash", t.cashUsd, t.rows.filter((r) => r.cash).length, "", allocTotal)
+            : ""
+        }
+        ${
+          t.rows.some((r) => r.other)
+            ? renderStatCard("🏺 Other", t.otherUsd, t.rows.filter((r) => r.other).length, "", allocTotal)
             : ""
         }
       </div>
@@ -1654,7 +1726,7 @@ function openEdit(id) {
   if (!holding) return;
   state.modal = { kind: "edit", id };
   state.selectedSymbol = holding.symbol;
-  state.selectedName = holding.name;
+  state.selectedName = holding.name || "";
   state.quantity = String(holding.quantity);
   state.costBasis = holding.costBasis == null ? "" : String(holding.costBasis);
   state.tag = holding.tag || "";
@@ -1733,7 +1805,11 @@ async function refreshQuotes() {
     persistCache();
     for (const holding of state.holdings) {
       const q = quotes[holding.symbol];
-      if (q) holding.name = q.name;
+      // quoteOther() deliberately omits `name` (several Other holdings can
+      // share one synthetic symbol, e.g. two DKK possessions) - only sync
+      // from a quote that actually carries one, or this wipes the user's
+      // per-holding name back to undefined on the next refresh.
+      if (q?.name) holding.name = q.name;
     }
     persist();
     if (state.holdings.length) recordHistory(totals().usd);
@@ -1831,8 +1907,10 @@ function addHolding() {
   const tag = state.tag.trim();
   // Keyed by symbol+tag, not symbol alone, so the same asset held in two
   // places (e.g. BTC on an exchange vs. BTC in cold storage) stays as two
-  // separate rows instead of being merged into one.
-  const existing = state.holdings.find((h) => h.symbol === symbol && (h.tag || "") === tag);
+  // separate rows instead of being merged into one. Other holdings never
+  // merge at all - two different named possessions (a house and a car) can
+  // share a symbol (just a currency) and a tag without being the same asset.
+  const existing = isOther(symbol) ? null : state.holdings.find((h) => h.symbol === symbol && (h.tag || "") === tag);
   const cost = state.costBasis.trim() === "" ? null : parseQty(state.costBasis);
   if (existing) {
     existing.quantity += qty;
@@ -1874,6 +1952,9 @@ function saveEdit() {
   const cost = state.costBasis.trim() === "" ? null : parseQty(state.costBasis);
   holding.costBasis = cost != null && !Number.isNaN(cost) ? cost : null;
   holding.tag = state.tag.trim();
+  // Only Other holdings expose an editable Name field - everything else's
+  // name comes from its ticker/currency and shouldn't change here.
+  if (isOther(holding.symbol) && (state.selectedName || "").trim()) holding.name = state.selectedName.trim();
   persist();
   closeModal();
 }
@@ -1922,13 +2003,18 @@ root.addEventListener("click", (event) => {
         state.selectedSymbol = `CASH-${code}`;
         state.selectedName = `Cash (${code})`;
         state.costBasis = "";
+      } else if (state.addMode === "other") {
+        const code = state.settings.localCurrency !== "USD" ? state.settings.localCurrency : CURRENCY_OPTIONS[0].code;
+        state.selectedSymbol = `OTHER-${code}`;
+        state.selectedName = "";
+        state.costBasis = "";
       } else {
         state.selectedSymbol = "";
         state.selectedName = "";
         state.searchQ = "";
       }
       render();
-      focusField(state.addMode === "cash" ? "quantity" : "search");
+      focusField(state.addMode === "cash" ? "quantity" : state.addMode === "other" ? "other-name" : "search");
     }
     if (action === "pick") {
       state.selectedSymbol = actionEl.dataset.symbol || "";
@@ -1952,6 +2038,7 @@ root.addEventListener("click", (event) => {
   if (action === "settings") openSettings();
   if (action === "toggle-privacy") {
     state.privacy = !state.privacy;
+    saveJson(PRIVACY_KEY, state.privacy);
     render();
   }
   if (action === "capture-screenshot") captureScreenshot();
@@ -1987,12 +2074,13 @@ root.addEventListener("input", (event) => {
     else state.costBasis = clean;
   }
   if (field === "tag") state.tag = event.target.value;
+  if (field === "other-name") state.selectedName = event.target.value;
   if (field === "search") {
     state.searchQ = event.target.value;
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => runSearch(event.target.value), 250);
   }
-  if (field === "quantity" || field === "search") updateSubmitState();
+  if (field === "quantity" || field === "search" || field === "other-name") updateSubmitState();
 });
 
 // Quantity/search typing deliberately skips a full render() (it would steal
@@ -2004,7 +2092,11 @@ function updateSubmitState() {
   const symbol = (state.selectedSymbol || state.searchQ).trim();
   const qty = parseQty(state.quantity);
   const validQty = !Number.isNaN(qty) && qty !== 0;
-  btn.disabled = !(state.modal.kind === "edit" ? validQty : symbol !== "" && validQty);
+  const editing = state.modal.kind === "edit";
+  const current = editing ? state.holdings.find((h) => h.id === state.modal.id) : null;
+  const otherMode = editing ? Boolean(current && isOther(current.symbol)) : state.addMode === "other";
+  const nameOk = !otherMode || (state.selectedName || "").trim() !== "";
+  btn.disabled = !(editing ? validQty && nameOk : symbol !== "" && validQty && nameOk);
 }
 
 root.addEventListener("change", (event) => {
@@ -2020,6 +2112,11 @@ root.addEventListener("change", (event) => {
     render();
     return;
   }
+  if (field === "other-currency") {
+    state.selectedSymbol = `OTHER-${event.target.value}`;
+    render();
+    return;
+  }
   if (field !== "localCurrency" && field !== "timeFormat" && field !== "timezone" && field !== "sortBy") return;
   state.settings[field] = event.target.value;
   persistSettings();
@@ -2031,7 +2128,11 @@ document.addEventListener("keydown", (event) => {
     closeModal();
     return;
   }
-  if (event.target instanceof HTMLInputElement) return;
+  // Guards against both focus being in an input AND a dialog simply being
+  // open - a freshly-rendered field (e.g. right after switching add-mode)
+  // is focused via a queued microtask, and a keystroke landing in the brief
+  // gap before that runs must never fall through to these shortcuts.
+  if (state.modal || event.target instanceof HTMLInputElement) return;
   if (event.key === "a") openAdd();
   if (event.key === "r") {
     refreshQuotes();
