@@ -66,7 +66,7 @@ const QUICK_ADDS = [
   { symbol: "ETH-USD", label: "Ethereum" },
   { symbol: "AAPL", label: "Apple" },
   { symbol: "MSFT", label: "Microsoft" },
-  { symbol: "NVDA", label: "Nvidia" },
+  { symbol: "NVDA", label: "nVidia" },
   { symbol: "GOOGL", label: "Alphabet" },
   { symbol: "AMZN", label: "Amazon" },
   { symbol: "NOVO-B.CO", label: "Novo Nordisk" },
@@ -80,7 +80,7 @@ const QUICK_ADDS = [
 const STOCK_DIRECTORY = [
   { symbol: "AAPL", name: "Apple", type: "EQUITY", exchange: "NASDAQ" },
   { symbol: "MSFT", name: "Microsoft", type: "EQUITY", exchange: "NASDAQ" },
-  { symbol: "NVDA", name: "Nvidia", type: "EQUITY", exchange: "NASDAQ" },
+  { symbol: "NVDA", name: "nVidia", type: "EQUITY", exchange: "NASDAQ" },
   { symbol: "GOOGL", name: "Alphabet (Class A)", type: "EQUITY", exchange: "NASDAQ" },
   { symbol: "GOOG", name: "Alphabet (Class C)", type: "EQUITY", exchange: "NASDAQ" },
   { symbol: "AMZN", name: "Amazon", type: "EQUITY", exchange: "NASDAQ" },

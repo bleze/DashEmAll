@@ -1204,4 +1204,18 @@ button {
     margin-left: 0;
     width: 100%;
   }
+
+  /* Actions (Sort/Refresh/Add holding) shares .panel-head's row with the
+     "Holdings" title and has no wrap of its own - too narrow to fit both,
+     .panel's overflow:hidden was clipping "Add holding" off the edge
+     entirely rather than just squeezing it. */
+  .panel-head {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+
+  .actions {
+    flex-wrap: wrap;
+    width: 100%;
+  }
 }
