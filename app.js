@@ -330,6 +330,24 @@ function formatLocal(n) {
   return fmt.format(n);
 }
 
+// Rounded to whole units - used where space is tight (tag chips) and a
+// dozen extra pixels per chip matters more than exact cents.
+const localFmtCacheCompact = {};
+function formatLocalCompact(n) {
+  const code = state.settings.localCurrency;
+  let fmt = localFmtCacheCompact[code];
+  if (!fmt) {
+    fmt = new Intl.NumberFormat(CURRENCY_LOCALES[code] || "en-US", {
+      style: "currency",
+      currency: code,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    });
+    localFmtCacheCompact[code] = fmt;
+  }
+  return fmt.format(n);
+}
+
 function splitUsd(n) {
   const formatted = usdParts.format(n);
   const match = formatted.match(/^(.*)([.]\d{2})$/);
@@ -1645,7 +1663,7 @@ function render() {
                     const c = tagColor(g.tag);
                     return `<button type="button" class="tag-filter-chip${active ? " active" : ""}" data-action="toggle-tag-filter" data-tag="${esc(g.tag)}" style="color:${c.text};border-color:${c.border};background:${active ? c.bgActive : "transparent"}">
                       <span class="tag-filter-name">${esc(g.tag)}</span>
-                      <span class="tag-filter-value sensitive" style="background:${c.bg}">${withDimmedDecimals(formatUsd(g.valueUsd))}</span>
+                      <span class="tag-filter-value sensitive" style="background:${c.bg}">${esc(formatLocalCompact(toLocal(g.valueUsd, state.fx)))}</span>
                     </button>`;
                   })(),
               )
