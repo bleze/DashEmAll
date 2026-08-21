@@ -349,10 +349,15 @@ function withDimmedDecimals(formatted) {
 }
 
 function formatQty(n) {
-  if (Number.isInteger(n)) return n.toLocaleString("en-US");
+  // Matches whatever locale the currency figures next to it use (da-DK's
+  // "." for thousands / "," for decimal is the opposite of en-US) - a
+  // quantity in US notation beside a DKK value in Danish notation read as
+  // inconsistent, even though each was individually correct.
+  const locale = CURRENCY_LOCALES[state.settings.localCurrency] || "en-US";
+  if (Number.isInteger(n)) return n.toLocaleString(locale);
   const abs = Math.abs(n);
   const digits = abs >= 1 ? 4 : abs >= 0.01 ? 6 : 8;
-  return n.toLocaleString("en-US", { maximumFractionDigits: digits });
+  return n.toLocaleString(locale, { maximumFractionDigits: digits });
 }
 
 function formatPct(n) {
@@ -582,22 +587,25 @@ function parseYahooChart(json) {
   };
 }
 
-async function quoteCrypto(symbol) {
+// Shared by quoteCrypto and fetchCryptoSparkline - the hardcoded CRYPTO map
+// only covers BTC/ETH/SOL, so anything else needs this search fallback to
+// resolve a CoinGecko id at all.
+async function resolveCoinGeckoId(symbol) {
   const meta = cryptoMeta(symbol);
-  let id = meta?.id;
-  let name = meta?.name || symbol;
-  if (!id) {
-    const needle = symbol.replace(/-USD$/, "").toLowerCase();
-    const search = await fetchJsonDirect(
-      `https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(needle)}`,
-    );
-    const coin = (search.coins || []).find(
-      (c) => c.symbol?.toLowerCase() === needle || c.id === needle,
-    ) || search.coins?.[0];
-    if (!coin) throw new Error("Unknown crypto");
-    id = coin.id;
-    name = coin.name;
-  }
+  if (meta?.id) return { id: meta.id, name: meta.name };
+  const needle = symbol.replace(/-USD$/, "").toLowerCase();
+  const search = await fetchJsonDirect(
+    `https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(needle)}`,
+  );
+  const coin = (search.coins || []).find(
+    (c) => c.symbol?.toLowerCase() === needle || c.id === needle,
+  ) || search.coins?.[0];
+  if (!coin) throw new Error("Unknown crypto");
+  return { id: coin.id, name: coin.name };
+}
+
+async function quoteCrypto(symbol) {
+  const { id, name } = await resolveCoinGeckoId(symbol);
   const data = await fetchJsonDirect(
     `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(id)}&vs_currencies=usd,dkk&include_24hr_change=true`,
   );
@@ -692,10 +700,9 @@ async function fetchStockSparkline(symbol) {
 }
 
 async function fetchCryptoSparkline(symbol) {
-  const meta = cryptoMeta(symbol);
-  if (!meta?.id) return [];
+  const { id } = await resolveCoinGeckoId(symbol);
   const data = await fetchJsonDirect(
-    `https://api.coingecko.com/api/v3/coins/${meta.id}/market_chart?vs_currency=usd&days=30&interval=daily`,
+    `https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=30&interval=daily`,
   );
   return (data.prices || []).map(([, p]) => p).filter((v) => typeof v === "number");
 }
@@ -951,6 +958,28 @@ function totals() {
   return { usd, local: toLocal(usd, state.fx), changeUsd, changePct, btcUsd, stocksUsd, cashUsd, rows };
 }
 
+// Same label -> value -> local-currency pattern used everywhere else, plus
+// a %-of-portfolio badge in the header row (only when the bucket actually
+// has something in it - a "0.0%" badge on an empty category is just noise).
+function renderStatCard(label, valueUsd, count, emptyText, allocTotal) {
+  const pct = allocTotal ? (valueUsd / allocTotal) * 100 : 0;
+  return `
+    <div class="stat">
+      <div class="stat-head">
+        <div class="stat-label">${label}</div>
+        ${count ? `<span class="pill flat">${pct.toFixed(1)}%</span>` : ""}
+      </div>
+      <div class="stat-value">${withDimmedDecimals(formatUsd(valueUsd))}</div>
+      ${
+        count && state.settings.localCurrency !== "USD"
+          ? `<div class="name">${withDimmedDecimals(formatLocal(toLocal(valueUsd, state.fx)))}</div>`
+          : ""
+      }
+      <div class="stat-sub">${count ? `${count} position${count === 1 ? "" : "s"}` : emptyText}</div>
+    </div>
+  `;
+}
+
 function tagBreakdown(rows) {
   const map = new Map();
   for (const row of rows) {
@@ -1144,7 +1173,7 @@ function renderHolding(row, allocTotal, hasCost) {
   const rest = row.headlines.slice(1, 3);
   const localCode = state.settings.localCurrency;
   const convertedPrice =
-    q && q.currency !== localCode
+    q && !row.cash && q.currency !== localCode
       ? formatLocal(toLocal(toUsd(q.price, q.currency, state.fx), state.fx))
       : null;
   return `
@@ -1163,7 +1192,7 @@ function renderHolding(row, allocTotal, hasCost) {
                     })()
                   : ""
               }</div>
-              ${q ? `<span class="pill ${signClass(row.dayUsd)}">${esc(formatPct(q.changePercent))}</span>` : ""}
+              ${q && !row.cash ? `<span class="pill ${signClass(row.dayUsd)}">${esc(formatPct(q.changePercent))}</span>` : ""}
             </div>
             <div class="name">${esc(q?.name || row.holding.name)}${missing ? " · waiting" : stale ? ` · <span class="stale-flag" title="No successful price update in over ${Math.round(STALE_MS / 60000)} minutes">stale · ${esc(relativeAgo(q.fetchedAt, state.now))}</span>` : ""}</div>
           </div>
@@ -1177,7 +1206,7 @@ function renderHolding(row, allocTotal, hasCost) {
           </div>
           <div>
             <div class="metric-label">Price</div>
-            <div class="num">${q ? withDimmedDecimals(formatPrice(q.price, q.currency)) : "—"}</div>
+            <div class="num">${q && !row.cash ? withDimmedDecimals(formatPrice(q.price, q.currency)) : "—"}</div>
             ${convertedPrice ? `<div class="name">${withDimmedDecimals(convertedPrice)}</div>` : ""}
           </div>
           <div>
@@ -1235,6 +1264,15 @@ function renderSettingsModal() {
           <select data-field="localCurrency">
             ${CURRENCY_OPTIONS.map((c) => `<option value="${esc(c.code)}" ${c.code === s.localCurrency ? "selected" : ""}>${esc(c.code)} — ${esc(c.label)}</option>`).join("")}
           </select>
+          ${
+            s.localCurrency !== "USD"
+              ? `<p class="field-hint">${
+                  state.fx[s.localCurrency]
+                    ? `Current rate: USD/${esc(s.localCurrency)} ${state.fx[s.localCurrency].toFixed(4)}`
+                    : "Waiting for FX rate…"
+                }</p>`
+              : ""
+          }
         </div>
         <div class="field">
           <label>Clock format</label>
@@ -1467,21 +1505,22 @@ function render() {
       <div class="hero-main">
         ${renderHeroSpark(historySummary)}
         <div class="hero-content">
-          <div class="kicker">Total value</div>
+          <div class="kicker-row">
+            <div class="kicker">Total value</div>
+            <span class="pill ${signClass(t.changeUsd)}">${esc(formatPct(t.changePct))}</span>
+          </div>
           <div class="total-usd">${esc(usdSplit.main)}<span class="frac">${esc(usdSplit.frac)}</span></div>
           ${state.settings.localCurrency !== "USD" ? `<div class="total-local">${withDimmedDecimals(formatLocal(t.local))}</div>` : ""}
           <div class="delta ${signClass(t.changeUsd)}">
-            <span>${withDimmedDecimals(formatSignedUsd(t.changeUsd))} today</span>
-            <span>${esc(formatPct(t.changePct))}</span>
-            ${
-              state.settings.localCurrency !== "USD"
-                ? `<span class="fx-note">${
-                    state.fx[state.settings.localCurrency]
-                      ? `USD/${esc(state.settings.localCurrency)} ${state.fx[state.settings.localCurrency].toFixed(4)}`
-                      : "Waiting for FX rate"
-                  }</span>`
-                : ""
-            }
+            <div class="delta-change">
+              <div class="metric-label">Today</div>
+              <div class="num">${withDimmedDecimals(formatSignedUsd(t.changeUsd))}</div>
+              ${
+                state.settings.localCurrency !== "USD"
+                  ? `<div class="name ${signClass(t.changeUsd)}">${withDimmedDecimals(formatSignedLocal(toLocal(t.changeUsd, state.fx)))}</div>`
+                  : ""
+              }
+            </div>
             ${
               historySummary
                 ? `<span class="history-change ${historySummary.dir}">${withDimmedDecimals(formatSignedUsd(historySummary.change))} · ${esc(formatPct(historySummary.changePct))} since ${esc(historySummary.firstLabel)}</span>`
@@ -1491,39 +1530,11 @@ function render() {
         </div>
       </div>
       <div class="side-stats">
-        <div class="stat">
-          <div class="stat-label">Bitcoin &amp; crypto</div>
-          <div class="stat-value">${withDimmedDecimals(formatUsd(t.btcUsd))}</div>
-          <div class="stat-sub">${
-            t.rows.some((r) => r.crypto)
-              ? `${t.rows.filter((r) => r.crypto).length} positions${
-                  state.settings.localCurrency !== "USD"
-                    ? ` · ${withDimmedDecimals(formatLocal(toLocal(t.btcUsd, state.fx)))}`
-                    : ""
-                }`
-              : "No crypto yet"
-          }</div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">Stocks</div>
-          <div class="stat-value">${withDimmedDecimals(formatUsd(t.stocksUsd))}</div>
-          <div class="stat-sub">${t.rows.filter((r) => !r.crypto && !r.cash).length} positions${
-            state.settings.localCurrency !== "USD"
-              ? ` · ${withDimmedDecimals(formatLocal(toLocal(t.stocksUsd, state.fx)))}`
-              : ""
-          }</div>
-        </div>
+        ${renderStatCard("🪙 Bitcoin &amp; crypto", t.btcUsd, t.rows.filter((r) => r.crypto).length, "No crypto yet", allocTotal)}
+        ${renderStatCard("📈 Stocks", t.stocksUsd, t.rows.filter((r) => !r.crypto && !r.cash).length, "No stocks yet", allocTotal)}
         ${
           t.rows.some((r) => r.cash)
-            ? `<div class="stat">
-                <div class="stat-label">Cash</div>
-                <div class="stat-value">${withDimmedDecimals(formatUsd(t.cashUsd))}</div>
-                <div class="stat-sub">${t.rows.filter((r) => r.cash).length} positions${
-                  state.settings.localCurrency !== "USD"
-                    ? ` · ${withDimmedDecimals(formatLocal(toLocal(t.cashUsd, state.fx)))}`
-                    : ""
-                }</div>
-              </div>`
+            ? renderStatCard("💵 Cash", t.cashUsd, t.rows.filter((r) => r.cash).length, "", allocTotal)
             : ""
         }
       </div>

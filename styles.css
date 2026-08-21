@@ -236,12 +236,19 @@ button {
   border-top: 0;
 }
 
+.kicker-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
 .kicker {
   font-size: 11px;
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--muted);
-  margin-bottom: 8px;
 }
 
 .total-usd {
@@ -298,12 +305,6 @@ button {
   color: var(--muted);
 }
 
-.fx-note {
-  color: var(--muted);
-  font-family: var(--sans);
-  font-size: 13px;
-}
-
 .side-stats {
   display: grid;
   gap: 12px;
@@ -314,6 +315,13 @@ button {
   border: 1px solid var(--line);
   padding: 16px 18px;
   position: relative;
+}
+
+.stat-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .stat-label {
