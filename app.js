@@ -46,7 +46,7 @@ const SORT_OPTIONS = [
   { value: "value", label: "Value" },
   { value: "changePct", label: "Today's %" },
   { value: "pnl", label: "P/L" },
-  { value: "symbol", label: "Symbol" },
+  { value: "symbol", label: "Ticker" },
 ];
 const DEFAULT_SETTINGS = { localCurrency: "DKK", timeFormat: "auto", timezone: "auto", sortBy: "value" };
 
@@ -1256,7 +1256,7 @@ function renderHolding(row, allocTotal, hasCost) {
                     })()
                   : ""
               }</div>
-              ${q && !row.manual ? `<span class="pill ${signClass(row.dayUsd)}">${esc(formatPct(q.changePercent))}</span>` : ""}
+              ${q && !row.manual ? `<span class="pill ${signClass(row.dayUsd)}" title="${row.crypto ? "Change over the last 24 hours" : "Change since yesterday's close"}">${esc(formatPct(q.changePercent))}</span>` : ""}
             </div>
             <div class="name">${esc(q?.name || row.holding.name || row.holding.symbol)}${missing ? " · waiting" : stale ? ` · <span class="stale-flag" title="No successful price update in over ${Math.round(STALE_MS / 60000)} minutes">stale · ${esc(relativeAgo(q.fetchedAt, state.now))}</span>` : ""}</div>
           </div>
@@ -1432,7 +1432,7 @@ function renderHoldingModal() {
         }
         ${
           editing
-            ? `<div class="field"><label>${editingCash || editingOther ? "Currency" : "Symbol"}</label><input value="${esc(editingCash ? cashCurrency(current.symbol) : editingOther ? otherCurrency(current.symbol) : current?.symbol || "")}" disabled></div>`
+            ? `<div class="field"><label>${editingCash || editingOther ? "Currency" : "Ticker"}</label><input value="${esc(editingCash ? cashCurrency(current.symbol) : editingOther ? otherCurrency(current.symbol) : current?.symbol || "")}" disabled></div>`
             : isCashMode
               ? `<div class="field">
                   <label>Currency</label>
@@ -1599,7 +1599,7 @@ function render() {
         <div class="hero-content">
           <div class="kicker-row">
             <div class="kicker">Total value</div>
-            <span class="pill ${signClass(t.changeUsd)}">${esc(formatPct(t.changePct))}</span>
+            <span class="pill ${signClass(t.changeUsd)}" title="Portfolio change today (24h for crypto, since previous close for everything else)">${esc(formatPct(t.changePct))}</span>
           </div>
           <div class="total-usd sensitive">${esc(usdSplit.main)}<span class="frac">${esc(usdSplit.frac)}</span></div>
           ${state.settings.localCurrency !== "USD" ? `<div class="total-local sensitive">${withDimmedDecimals(formatLocal(t.local))}</div>` : ""}
