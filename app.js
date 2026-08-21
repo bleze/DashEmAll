@@ -164,6 +164,22 @@ const STOCK_DIRECTORY = [
   { symbol: "BAVA.CO", name: "Bavarian Nordic", type: "EQUITY", exchange: "CPH" },
 ];
 
+// Metals get their own Add-dialog type (a fixed 4-option picker, not the
+// general ticker search) so they're actually discoverable - they still
+// resolve through the normal Yahoo ticker quote/sparkline/news paths like
+// any other ticker, this only changes how the symbol gets picked and how
+// they're bucketed in the stat cards.
+const METALS = [
+  { symbol: "GC=F", name: "Gold" },
+  { symbol: "SI=F", name: "Silver" },
+  { symbol: "PL=F", name: "Platinum" },
+  { symbol: "PA=F", name: "Palladium" },
+];
+const METAL_SYMBOLS = new Set(METALS.map((m) => m.symbol));
+function isMetal(symbol) {
+  return METAL_SYMBOLS.has(symbol);
+}
+
 // Quantity for these is priced in troy ounces (the COMEX futures contract
 // unit) - not shares, not grams. Surfaced in the UI so a physical holding by
 // weight doesn't get entered in the wrong unit by mistake.
@@ -984,6 +1000,7 @@ function totals() {
   let stocksUsd = 0;
   let cashUsd = 0;
   let otherUsd = 0;
+  let metalsUsd = 0;
   const rows = state.holdings.map((holding, index) => {
     const quote = state.quotes[holding.symbol];
     const valueUsd = holdingValueUsd(holding, quote);
@@ -993,8 +1010,10 @@ function totals() {
     const crypto = isCrypto(quote, holding.symbol);
     const cash = isCash(holding.symbol);
     const other = isOther(holding.symbol);
+    const metal = isMetal(holding.symbol);
     if (cash) cashUsd += valueUsd;
     else if (other) otherUsd += valueUsd;
+    else if (metal) metalsUsd += valueUsd;
     else if (crypto) btcUsd += valueUsd;
     else stocksUsd += valueUsd;
     // Other holdings' quantity IS the current value (no share count), so
@@ -1012,6 +1031,7 @@ function totals() {
       crypto,
       cash,
       other,
+      metal,
       manual: cash || other,
       color: colorFor(holding.symbol, index),
       pnlUsd,
@@ -1019,7 +1039,7 @@ function totals() {
     };
   });
   const changePct = usd - changeUsd === 0 ? 0 : (changeUsd / (usd - changeUsd)) * 100;
-  return { usd, local: toLocal(usd, state.fx), changeUsd, changePct, btcUsd, stocksUsd, cashUsd, otherUsd, rows };
+  return { usd, local: toLocal(usd, state.fx), changeUsd, changePct, btcUsd, stocksUsd, cashUsd, otherUsd, metalsUsd, rows };
 }
 
 // Same label -> value -> local-currency pattern used everywhere else, plus
@@ -1395,10 +1415,12 @@ function renderHoldingModal() {
   const validQty = !Number.isNaN(qty) && qty !== 0;
   const isCashMode = !editing && state.addMode === "cash";
   const isOtherMode = !editing && state.addMode === "other";
+  const isMetalMode = !editing && state.addMode === "metal";
   const editingCash = Boolean(editing && current && isCash(current.symbol));
   const editingOther = Boolean(editing && current && isOther(current.symbol));
   const cash = isCashMode || editingCash;
   const other = isOtherMode || editingOther;
+  const metal = isMetalMode || Boolean(editing && current && isMetal(current.symbol));
   const nameOk = !other || (state.selectedName || "").trim() !== "";
   const canSubmit = editing ? validQty && nameOk : symbol !== "" && validQty && nameOk;
   const unit = quantityUnit(editing ? current?.symbol : symbol.toUpperCase(), true);
@@ -1409,13 +1431,14 @@ function renderHoldingModal() {
     <div class="dialog-backdrop">
       <form class="dialog" data-action="${editing ? "save-edit" : "save-add"}">
         <h3>${editing ? "Edit holding" : "Add holding"}</h3>
-        <p>${editing ? "Update quantity or average cost." : "Pick a ticker, a cash amount, or describe another asset, then how much it's worth. Saved in this browser."}</p>
+        <p>${editing ? "Update quantity or average cost." : "Pick a ticker or metal, a cash amount, or describe another asset, then how much it's worth. Saved in this browser."}</p>
         ${
           !editing
             ? `<div class="field">
                 <label>Type</label>
                 <div class="type-toggle">
                   <button type="button" class="type-btn ${state.addMode === "ticker" ? "active" : ""}" data-action="set-add-mode" data-mode="ticker">Ticker</button>
+                  <button type="button" class="type-btn ${state.addMode === "metal" ? "active" : ""}" data-action="set-add-mode" data-mode="metal">Metal</button>
                   <button type="button" class="type-btn ${state.addMode === "cash" ? "active" : ""}" data-action="set-add-mode" data-mode="cash">Cash</button>
                   <button type="button" class="type-btn ${state.addMode === "other" ? "active" : ""}" data-action="set-add-mode" data-mode="other">Other</button>
                 </div>
@@ -1447,7 +1470,14 @@ function renderHoldingModal() {
                       ${CURRENCY_OPTIONS.map((c) => `<option value="${esc(c.code)}" ${state.selectedSymbol === `OTHER-${c.code}` ? "selected" : ""}>${esc(c.code)} — ${esc(c.label)}</option>`).join("")}
                     </select>
                   </div>`
-                : `<div class="field field-combo">
+                : isMetalMode
+                  ? `<div class="field">
+                      <label>Metal</label>
+                      <select data-field="metal-symbol">
+                        ${METALS.map((m) => `<option value="${esc(m.symbol)}" ${state.selectedSymbol === m.symbol ? "selected" : ""}>${esc(m.name)}</option>`).join("")}
+                      </select>
+                    </div>`
+                  : `<div class="field field-combo">
                 <label>Search ticker</label>
                 <input data-field="search" value="${esc(state.searchQ)}" placeholder="AAPL, BTC-USD, NOVO-B.CO" autocomplete="off">
                 ${
@@ -1465,7 +1495,7 @@ function renderHoldingModal() {
               </div>`
         }
         ${
-          !cash && !other
+          !cash && !other && !metal
             ? `<div class="field">
                 <label>Selected</label>
                 <input value="${
@@ -1623,10 +1653,15 @@ function render() {
       </div>
       <div class="side-stats">
         ${renderStatCard("🪙 Bitcoin &amp; crypto", t.btcUsd, t.rows.filter((r) => r.crypto).length, "No crypto yet", allocTotal)}
-        ${renderStatCard("📈 Stocks", t.stocksUsd, t.rows.filter((r) => !r.crypto && !r.cash && !r.other).length, "No stocks yet", allocTotal)}
+        ${renderStatCard("📈 Stocks", t.stocksUsd, t.rows.filter((r) => !r.crypto && !r.cash && !r.other && !r.metal).length, "No stocks yet", allocTotal)}
         ${
           t.rows.some((r) => r.cash)
             ? renderStatCard("💵 Cash", t.cashUsd, t.rows.filter((r) => r.cash).length, "", allocTotal)
+            : ""
+        }
+        ${
+          t.rows.some((r) => r.metal)
+            ? renderStatCard("🥇 Metals", t.metalsUsd, t.rows.filter((r) => r.metal).length, "", allocTotal)
             : ""
         }
         ${
@@ -2026,13 +2061,23 @@ root.addEventListener("click", (event) => {
         state.selectedSymbol = `OTHER-${code}`;
         state.selectedName = "";
         state.costBasis = "";
+      } else if (state.addMode === "metal") {
+        state.selectedSymbol = METALS[0].symbol;
+        state.selectedName = METALS[0].name;
+        state.searchQ = "";
       } else {
         state.selectedSymbol = "";
         state.selectedName = "";
         state.searchQ = "";
       }
       render();
-      focusField(state.addMode === "cash" ? "quantity" : state.addMode === "other" ? "other-name" : "search");
+      focusField(
+        state.addMode === "cash" || state.addMode === "metal"
+          ? "quantity"
+          : state.addMode === "other"
+            ? "other-name"
+            : "search",
+      );
     }
     if (action === "pick") {
       state.selectedSymbol = actionEl.dataset.symbol || "";
@@ -2132,6 +2177,13 @@ root.addEventListener("change", (event) => {
   }
   if (field === "other-currency") {
     state.selectedSymbol = `OTHER-${event.target.value}`;
+    render();
+    return;
+  }
+  if (field === "metal-symbol") {
+    const metal = METALS.find((m) => m.symbol === event.target.value);
+    state.selectedSymbol = metal.symbol;
+    state.selectedName = metal.name;
     render();
     return;
   }
