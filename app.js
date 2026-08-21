@@ -398,7 +398,16 @@ function formatQty(n) {
 }
 
 function formatPct(n) {
-  return `${n > 0 ? "+" : ""}${n.toFixed(2)}%`;
+  const locale = CURRENCY_LOCALES[state.settings.localCurrency] || "en-US";
+  const sign = n > 0 ? "+" : "";
+  return `${sign}${n.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+}
+
+// Unsigned - for allocation shares (always >= 0), where formatPct's "+"
+// prefix would be wrong.
+function formatShare(n) {
+  const locale = CURRENCY_LOCALES[state.settings.localCurrency] || "en-US";
+  return `${n.toLocaleString(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
 }
 
 function formatSignedUsd(n) {
@@ -1051,7 +1060,7 @@ function renderStatCard(label, valueUsd, count, emptyText, allocTotal) {
     <div class="stat">
       <div class="stat-head">
         <div class="stat-label">${label}</div>
-        ${count ? `<span class="pill flat">${pct.toFixed(1)}%</span>` : ""}
+        ${count ? `<span class="pill flat">${formatShare(pct)}</span>` : ""}
       </div>
       <div class="stat-value sensitive">${withDimmedDecimals(formatUsd(valueUsd))}</div>
       ${
@@ -1294,7 +1303,7 @@ function renderHolding(row, allocTotal, hasCost) {
             ${convertedPrice ? `<div class="name">${withDimmedDecimals(convertedPrice)}</div>` : ""}
           </div>
           <div>
-            <div class="metric-label">USD / ${esc(localCode)} · ${(pct * 100).toFixed(1)}%</div>
+            <div class="metric-label">USD / ${esc(localCode)} · ${formatShare(pct * 100)}</div>
             <div class="num sensitive">${withDimmedDecimals(formatUsd(row.valueUsd))}</div>
             ${localCode !== "USD" ? `<div class="name sensitive">${withDimmedDecimals(formatLocal(toLocal(row.valueUsd, state.fx)))}</div>` : ""}
           </div>
@@ -1416,6 +1425,7 @@ function renderHoldingModal() {
   const isCashMode = !editing && state.addMode === "cash";
   const isOtherMode = !editing && state.addMode === "other";
   const isMetalMode = !editing && state.addMode === "metal";
+  const isCryptoMode = !editing && state.addMode === "crypto";
   const editingCash = Boolean(editing && current && isCash(current.symbol));
   const editingOther = Boolean(editing && current && isOther(current.symbol));
   const cash = isCashMode || editingCash;
@@ -1431,13 +1441,14 @@ function renderHoldingModal() {
     <div class="dialog-backdrop">
       <form class="dialog" data-action="${editing ? "save-edit" : "save-add"}">
         <h3>${editing ? "Edit holding" : "Add holding"}</h3>
-        <p>${editing ? "Update quantity or average cost." : "Pick a ticker or metal, a cash amount, or describe another asset, then how much it's worth. Saved in this browser."}</p>
+        <p>${editing ? "Update quantity or average cost." : "Pick a ticker, crypto, or metal, a cash amount, or describe another asset, then how much it's worth. Saved in this browser."}</p>
         ${
           !editing
             ? `<div class="field">
                 <label>Type</label>
                 <div class="type-toggle">
                   <button type="button" class="type-btn ${state.addMode === "ticker" ? "active" : ""}" data-action="set-add-mode" data-mode="ticker">Ticker</button>
+                  <button type="button" class="type-btn ${state.addMode === "crypto" ? "active" : ""}" data-action="set-add-mode" data-mode="crypto">Crypto</button>
                   <button type="button" class="type-btn ${state.addMode === "metal" ? "active" : ""}" data-action="set-add-mode" data-mode="metal">Metal</button>
                   <button type="button" class="type-btn ${state.addMode === "cash" ? "active" : ""}" data-action="set-add-mode" data-mode="cash">Cash</button>
                   <button type="button" class="type-btn ${state.addMode === "other" ? "active" : ""}" data-action="set-add-mode" data-mode="other">Other</button>
@@ -1478,8 +1489,8 @@ function renderHoldingModal() {
                       </select>
                     </div>`
                   : `<div class="field field-combo">
-                <label>Search ticker</label>
-                <input data-field="search" value="${esc(state.searchQ)}" placeholder="AAPL, BTC-USD, NOVO-B.CO" autocomplete="off">
+                <label>${isCryptoMode ? "Search crypto" : "Search ticker"}</label>
+                <input data-field="search" value="${esc(state.searchQ)}" placeholder="${isCryptoMode ? "BTC-USD, ETH-USD, SOL-USD" : "AAPL, MSFT, NOVO-B.CO"}" autocomplete="off">
                 ${
                   state.searchResults.length
                     ? `<ul class="search-list">${state.searchResults
@@ -1502,7 +1513,7 @@ function renderHoldingModal() {
                   state.selectedSymbol || current
                     ? `${esc(state.selectedSymbol || current?.symbol || "")} · ${esc(state.selectedName || current?.name || "")}`
                     : ""
-                }" placeholder="Pick a ticker above" disabled>
+                }" placeholder="${isCryptoMode ? "Pick a crypto above" : "Pick a ticker above"}" disabled>
               </div>`
             : ""
         }
@@ -1546,16 +1557,36 @@ function renderHoldingModal() {
 // Value-over-time is shown as a faded background inside the hero card
 // itself (same treatment as the per-holding sparklines) rather than a
 // separate section, to save vertical space.
+// Two distinct comparisons, not one: "since yesterday" (day-over-day, the
+// second-to-last snapshot) and "since first use" (the oldest snapshot on
+// file). With only 2 points recorded those are the same snapshot, which is
+// why sinceFirst only renders once there's a third point for it to differ
+// from - otherwise it'd just repeat sincePrev under a different label.
 function computeHistorySummary() {
   const points = state.history;
   if (points.length < 2) return null;
   const values = points.map((p) => p.usd);
   const min = Math.min(...values);
   const max = Math.max(...values);
-  const change = values[values.length - 1] - values[0];
-  const changePct = values[0] ? (change / values[0]) * 100 : 0;
-  const firstLabel = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(points[0].ts);
-  return { points, min, max, change, changePct, dir: signClass(change), firstLabel };
+  const dateLabel = (ts) => new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(ts);
+  const changeFrom = (i, label) => {
+    const change = values[values.length - 1] - values[i];
+    const changePct = values[i] ? (change / values[i]) * 100 : 0;
+    return { change, changePct, dir: signClass(change), label: label || dateLabel(points[i].ts) };
+  };
+  // "yesterday" reads better than a date, but only when the previous
+  // snapshot really is the prior calendar day - if the app sat unopened for
+  // a few days, naming the actual gap is more honest than implying daily use.
+  const prevIsYesterday =
+    new Date(points[values.length - 2].ts).toDateString() ===
+    new Date(state.now - 24 * 60 * 60 * 1000).toDateString();
+  const sincePrev = changeFrom(values.length - 2, prevIsYesterday ? "yesterday" : null);
+  const sinceFirst = points.length > 2 ? changeFrom(0) : null;
+  // The trend line spans the full history, so its color follows the
+  // longest comparison available (sinceFirst), falling back to sincePrev
+  // when there are only 2 points and sinceFirst doesn't exist.
+  const dir = (sinceFirst || sincePrev).dir;
+  return { points, min, max, sincePrev, sinceFirst, dir };
 }
 
 function renderHeroSpark(summary) {
@@ -1635,7 +1666,7 @@ function render() {
           ${state.settings.localCurrency !== "USD" ? `<div class="total-local sensitive">${withDimmedDecimals(formatLocal(t.local))}</div>` : ""}
           <div class="delta ${signClass(t.changeUsd)}">
             <div class="delta-change">
-              <div class="metric-label">Today</div>
+              <div class="metric-label" title="Sum of each holding's own change figure: 24h rolling for crypto, since previous close for everything else - not since local midnight">Today</div>
               <div class="num sensitive">${withDimmedDecimals(formatSignedUsd(t.changeUsd))}</div>
               ${
                 state.settings.localCurrency !== "USD"
@@ -1645,7 +1676,20 @@ function render() {
             </div>
             ${
               historySummary
-                ? `<span class="history-change ${historySummary.dir}"><span class="sensitive">${withDimmedDecimals(formatSignedUsd(historySummary.change))}</span> · ${esc(formatPct(historySummary.changePct))} since ${esc(historySummary.firstLabel)}</span>`
+                ? `<div class="delta-change">
+                    <div class="metric-label">Since ${esc(historySummary.sincePrev.label)}</div>
+                    <div class="num sensitive ${historySummary.sincePrev.dir}">${withDimmedDecimals(formatSignedUsd(historySummary.sincePrev.change))}</div>
+                    <div class="name sensitive ${historySummary.sincePrev.dir}">${esc(formatPct(historySummary.sincePrev.changePct))}</div>
+                  </div>`
+                : ""
+            }
+            ${
+              historySummary?.sinceFirst
+                ? `<div class="delta-change">
+                    <div class="metric-label">Since ${esc(historySummary.sinceFirst.label)}</div>
+                    <div class="num sensitive ${historySummary.sinceFirst.dir}">${withDimmedDecimals(formatSignedUsd(historySummary.sinceFirst.change))}</div>
+                    <div class="name sensitive ${historySummary.sinceFirst.dir}">${esc(formatPct(historySummary.sinceFirst.changePct))}</div>
+                  </div>`
                 : ""
             }
           </div>
@@ -1935,15 +1979,20 @@ async function runSearch(q) {
   }
   // Show local/typed matches immediately - never leaves the dropdown empty
   // while we wait on a network round trip that may never come back.
+  // Crypto mode narrows both the local directory and live results to
+  // crypto only - the typed-symbol fallback stays exempt so an unlisted
+  // coin (e.g. "DOGE-USD") can still be added by typing it exactly.
+  const cryptoOnly = state.addMode === "crypto";
   const cryptoHit = cryptoMatch(query);
-  const local = [...(cryptoHit ? [cryptoHit] : []), ...localTickerMatches(query)];
+  const local = [...(cryptoHit ? [cryptoHit] : []), ...(cryptoOnly ? [] : localTickerMatches(query))];
   applySearchResults(dedupeResults([...local, typedFallback(query)]));
   render();
   refocusSearchInput();
   try {
     const live = await liveTickerSearch(query);
     if (token !== searchToken) return;
-    applySearchResults(dedupeResults([...local, ...live, typedFallback(query)]));
+    const liveMatches = cryptoOnly ? live.filter((r) => r.type === "CRYPTOCURRENCY") : live;
+    applySearchResults(dedupeResults([...local, ...liveMatches, typedFallback(query)]));
   } catch {
     // Live search is best-effort only; local + typed fallback already shown.
   }

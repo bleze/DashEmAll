@@ -371,22 +371,6 @@ button {
   pointer-events: none;
 }
 
-.history-change {
-  font-family: var(--money);
-  font-size: 13px;
-  font-variant-numeric: tabular-nums lining-nums;
-}
-
-.history-change.up {
-  color: var(--up);
-}
-.history-change.down {
-  color: var(--down);
-}
-.history-change.flat {
-  color: var(--muted);
-}
-
 .hist-line {
   fill: none;
   stroke-width: 2;
@@ -690,7 +674,10 @@ button {
 
 .holding-spark {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   width: 100%;
   height: 100%;
   opacity: 0.07;
