@@ -1155,6 +1155,14 @@ button {
   filter: none;
 }
 
+.privacy.capturing .sensitive,
+.privacy.capturing .sensitive:hover {
+  filter: none !important;
+  color: transparent !important;
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 3px;
+}
+
 .error-banner {
   margin-bottom: 16px;
   padding: 10px 14px;

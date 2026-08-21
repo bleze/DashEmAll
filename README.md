@@ -25,6 +25,7 @@ npx serve .
 - Settings let you pick a local currency (DKK/EUR/GBP/SEK/NOK/USD, with the current USD/local exchange rate shown right there), a 12/24-hour clock, and a timezone — independent of USD, which is always the base currency. Export/Import lets you carry holdings, settings, and history between browsers or URLs, and doubles as a manual backup.
 - Precious metals (gold, silver, platinum, palladium) are searchable by name and priced per troy ounce.
 - A Privacy toggle (top right, next to Settings) blurs everything that reveals position size or net worth — quantities, USD/local values, P/L — while leaving composition fully readable: symbols, tags, allocation %, day-change %, and per-share price all stay visible. Meant for sharing a screenshot of what you hold and how it's divided without revealing how much it's worth. Hover a blurred figure to peek at it without leaving privacy mode. Not persisted — resets to off on reload.
+- A "Save image" button (next to Privacy) exports the entire ledger — including holdings below the fold that don't fit in the window — as a downloaded PNG. If Privacy is on, the exported image redacts the same figures with solid bars rather than blur, so the file itself never contains the underlying numbers.
 - Every currency figure in the app draws its cents/øre dimmer than the whole-number part (a darker version of whatever color that figure already is — muted white normally, a darker green/red inside a colored P/L number).
 
 ## How it's built
@@ -34,6 +35,7 @@ Plain HTML/CSS/JS, no framework, no build step:
 - `index.html` — page shell with three containers inside `#app` (`#app-head`, `#app-tape`, `#app-body`).
 - `app.js` — all application logic: state, rendering, price/news fetching, event handling.
 - `styles.css` — styling.
+- `html2canvas.min.js` — the one vendored third-party file, used only by "Save image" to rasterize the ledger to PNG. No CDN calls; it ships in the repo.
 
 `render()` rebuilds `#app-head` and `#app-body` from the in-memory `state` object on every change — no diffing, just `innerHTML` replacement. The scrolling wire ticker lives in its own `#app-tape` container and only re-renders when its content actually changes, so its CSS animation isn't restarted by unrelated updates.
 

@@ -235,6 +235,7 @@ const state = {
   tagFilter: new Set(),
   addMode: "ticker",
   privacy: false,
+  capturing: false,
   now: Date.now(),
 };
 
@@ -1493,7 +1494,8 @@ function render() {
       </div>
       <div class="meta">
         <div class="meta-buttons">
-          <button type="button" class="btn btn-ghost btn-settings ${state.privacy ? "active" : ""}" data-action="toggle-privacy" title="Blur quantities and totals so a screenshot shows what you hold without your net worth">👁 Privacy</button>
+          <button type="button" class="btn btn-ghost btn-settings ${state.privacy ? "active" : ""}" data-action="toggle-privacy" title="Blur quantities and totals so you can share what you hold without revealing your net worth">👁 Privacy</button>
+          <button type="button" class="btn btn-ghost btn-settings" data-action="capture-screenshot" title="Save the full ledger as a PNG image, including rows that don't fit on screen" ${state.capturing ? "disabled" : ""}>📷 Save image</button>
           <button type="button" class="btn btn-ghost btn-settings" data-action="settings">Settings</button>
         </div>
         <div class="status-line">
@@ -1663,6 +1665,39 @@ function openEdit(id) {
 function openSettings() {
   state.modal = { kind: "settings" };
   render();
+}
+
+async function captureScreenshot() {
+  if (state.capturing) return;
+  state.capturing = true;
+  render();
+  root.classList.add("capturing");
+  try {
+    const scale = Math.min(window.devicePixelRatio || 1, 2);
+    const margin = 32 * scale;
+    const shot = await html2canvas(document.querySelector("#app"), {
+      backgroundColor: "#07080b",
+      scale,
+      useCORS: true,
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = shot.width + margin * 2;
+    canvas.height = shot.height + margin * 2;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#07080b";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(shot, margin, margin);
+    const a = document.createElement("a");
+    a.href = canvas.toDataURL("image/png");
+    a.download = `dashemall-${new Date().toISOString().slice(0, 10)}.png`;
+    a.click();
+  } catch (err) {
+    console.error("Screenshot failed", err);
+  } finally {
+    root.classList.remove("capturing");
+    state.capturing = false;
+    render();
+  }
 }
 
 function closeModal() {
@@ -1919,6 +1954,7 @@ root.addEventListener("click", (event) => {
     state.privacy = !state.privacy;
     render();
   }
+  if (action === "capture-screenshot") captureScreenshot();
   if (action === "refresh") {
     refreshQuotes();
     refreshNews();
