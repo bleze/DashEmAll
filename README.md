@@ -24,6 +24,7 @@ npx serve .
 - A scrolling "Wire" headline ticker, plus up to 3 headlines per holding with icons where available.
 - Settings let you pick a local currency (DKK/EUR/GBP/SEK/NOK/USD, with the current USD/local exchange rate shown right there), a 12/24-hour clock, and a timezone — independent of USD, which is always the base currency. Export/Import lets you carry holdings, settings, and history between browsers or URLs, and doubles as a manual backup.
 - Precious metals (gold, silver, platinum, palladium) are searchable by name and priced per troy ounce.
+- A Privacy toggle (top right, next to Settings) blurs everything that reveals position size or net worth — quantities, USD/local values, P/L — while leaving composition fully readable: symbols, tags, allocation %, day-change %, and per-share price all stay visible. Meant for sharing a screenshot of what you hold and how it's divided without revealing how much it's worth. Hover a blurred figure to peek at it without leaving privacy mode. Not persisted — resets to off on reload.
 - Every currency figure in the app draws its cents/øre dimmer than the whole-number part (a darker version of whatever color that figure already is — muted white normally, a darker green/red inside a colored P/L number).
 
 ## How it's built

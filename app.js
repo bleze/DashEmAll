@@ -234,6 +234,7 @@ const state = {
   tag: "",
   tagFilter: new Set(),
   addMode: "ticker",
+  privacy: false,
   now: Date.now(),
 };
 
@@ -969,10 +970,10 @@ function renderStatCard(label, valueUsd, count, emptyText, allocTotal) {
         <div class="stat-label">${label}</div>
         ${count ? `<span class="pill flat">${pct.toFixed(1)}%</span>` : ""}
       </div>
-      <div class="stat-value">${withDimmedDecimals(formatUsd(valueUsd))}</div>
+      <div class="stat-value sensitive">${withDimmedDecimals(formatUsd(valueUsd))}</div>
       ${
         count && state.settings.localCurrency !== "USD"
-          ? `<div class="name">${withDimmedDecimals(formatLocal(toLocal(valueUsd, state.fx)))}</div>`
+          ? `<div class="name sensitive">${withDimmedDecimals(formatLocal(toLocal(valueUsd, state.fx)))}</div>`
           : ""
       }
       <div class="stat-sub">${count ? `${count} position${count === 1 ? "" : "s"}` : emptyText}</div>
@@ -1200,7 +1201,7 @@ function renderHolding(row, allocTotal, hasCost) {
         <div class="holding-metrics">
           <div>
             <div class="metric-label">Qty</div>
-            <div class="num">${esc(formatQty(row.holding.quantity))}${
+            <div class="num sensitive">${esc(formatQty(row.holding.quantity))}${
               quantityUnit(row.holding.symbol) ? ` ${esc(quantityUnit(row.holding.symbol))}` : ""
             }</div>
           </div>
@@ -1211,19 +1212,19 @@ function renderHolding(row, allocTotal, hasCost) {
           </div>
           <div>
             <div class="metric-label">USD / ${esc(localCode)} · ${(pct * 100).toFixed(1)}%</div>
-            <div class="num">${withDimmedDecimals(formatUsd(row.valueUsd))}</div>
-            ${localCode !== "USD" ? `<div class="name">${withDimmedDecimals(formatLocal(toLocal(row.valueUsd, state.fx)))}</div>` : ""}
+            <div class="num sensitive">${withDimmedDecimals(formatUsd(row.valueUsd))}</div>
+            ${localCode !== "USD" ? `<div class="name sensitive">${withDimmedDecimals(formatLocal(toLocal(row.valueUsd, state.fx)))}</div>` : ""}
           </div>
           <div>
             <div class="metric-label">Profit/Loss</div>
             ${
               hasCost
-                ? `<div class="num ${row.pnlUsd == null ? "" : signClass(row.pnlUsd)}">${
+                ? `<div class="num sensitive ${row.pnlUsd == null ? "" : signClass(row.pnlUsd)}">${
                     row.pnlUsd == null ? "—" : withDimmedDecimals(formatSignedUsd(row.pnlUsd))
                   }</div>
                   ${
                     row.pnlUsd != null && localCode !== "USD"
-                      ? `<div class="name ${signClass(row.pnlUsd)}">${withDimmedDecimals(formatSignedLocal(toLocal(row.pnlUsd, state.fx)))}</div>`
+                      ? `<div class="name sensitive ${signClass(row.pnlUsd)}">${withDimmedDecimals(formatSignedLocal(toLocal(row.pnlUsd, state.fx)))}</div>`
                       : ""
                   }`
                 : ""
@@ -1476,6 +1477,7 @@ function updateTape() {
 }
 
 function render() {
+  root.classList.toggle("privacy", state.privacy);
   const t = totals();
   const usdSplit = splitUsd(t.usd);
   const hasCost = state.holdings.some((h) => h.costBasis != null);
@@ -1490,7 +1492,10 @@ function render() {
         <div class="tagline">Live ledger · stocks, bitcoin, newswire</div>
       </div>
       <div class="meta">
-        <button type="button" class="btn btn-ghost btn-settings" data-action="settings">Settings</button>
+        <div class="meta-buttons">
+          <button type="button" class="btn btn-ghost btn-settings ${state.privacy ? "active" : ""}" data-action="toggle-privacy" title="Blur quantities and totals so a screenshot shows what you hold without your net worth">👁 Privacy</button>
+          <button type="button" class="btn btn-ghost btn-settings" data-action="settings">Settings</button>
+        </div>
         <div class="status-line">
           <span class="dot ${state.status}"></span>
           ${state.status === "live" ? "Live" : state.status === "loading" ? "Updating" : state.status === "error" ? "Offline" : "Idle"}
@@ -1509,21 +1514,21 @@ function render() {
             <div class="kicker">Total value</div>
             <span class="pill ${signClass(t.changeUsd)}">${esc(formatPct(t.changePct))}</span>
           </div>
-          <div class="total-usd">${esc(usdSplit.main)}<span class="frac">${esc(usdSplit.frac)}</span></div>
-          ${state.settings.localCurrency !== "USD" ? `<div class="total-local">${withDimmedDecimals(formatLocal(t.local))}</div>` : ""}
+          <div class="total-usd sensitive">${esc(usdSplit.main)}<span class="frac">${esc(usdSplit.frac)}</span></div>
+          ${state.settings.localCurrency !== "USD" ? `<div class="total-local sensitive">${withDimmedDecimals(formatLocal(t.local))}</div>` : ""}
           <div class="delta ${signClass(t.changeUsd)}">
             <div class="delta-change">
               <div class="metric-label">Today</div>
-              <div class="num">${withDimmedDecimals(formatSignedUsd(t.changeUsd))}</div>
+              <div class="num sensitive">${withDimmedDecimals(formatSignedUsd(t.changeUsd))}</div>
               ${
                 state.settings.localCurrency !== "USD"
-                  ? `<div class="name ${signClass(t.changeUsd)}">${withDimmedDecimals(formatSignedLocal(toLocal(t.changeUsd, state.fx)))}</div>`
+                  ? `<div class="name sensitive ${signClass(t.changeUsd)}">${withDimmedDecimals(formatSignedLocal(toLocal(t.changeUsd, state.fx)))}</div>`
                   : ""
               }
             </div>
             ${
               historySummary
-                ? `<span class="history-change ${historySummary.dir}">${withDimmedDecimals(formatSignedUsd(historySummary.change))} · ${esc(formatPct(historySummary.changePct))} since ${esc(historySummary.firstLabel)}</span>`
+                ? `<span class="history-change ${historySummary.dir}"><span class="sensitive">${withDimmedDecimals(formatSignedUsd(historySummary.change))}</span> · ${esc(formatPct(historySummary.changePct))} since ${esc(historySummary.firstLabel)}</span>`
                 : ""
             }
           </div>
@@ -1566,7 +1571,7 @@ function render() {
                     const c = tagColor(g.tag);
                     return `<button type="button" class="tag-filter-chip${active ? " active" : ""}" data-action="toggle-tag-filter" data-tag="${esc(g.tag)}" style="color:${c.text};border-color:${c.border};background:${active ? c.bgActive : "transparent"}">
                       <span class="tag-filter-name">${esc(g.tag)}</span>
-                      <span class="tag-filter-value" style="background:${c.bg}">${withDimmedDecimals(formatUsd(g.valueUsd))}</span>
+                      <span class="tag-filter-value sensitive" style="background:${c.bg}">${withDimmedDecimals(formatUsd(g.valueUsd))}</span>
                     </button>`;
                   })(),
               )
@@ -1910,6 +1915,10 @@ root.addEventListener("click", (event) => {
   const action = actionEl.dataset.action;
   if (action === "add") openAdd();
   if (action === "settings") openSettings();
+  if (action === "toggle-privacy") {
+    state.privacy = !state.privacy;
+    render();
+  }
   if (action === "refresh") {
     refreshQuotes();
     refreshNews();

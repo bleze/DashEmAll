@@ -138,11 +138,22 @@ button {
   align-items: flex-end;
 }
 
+.meta-buttons {
+  display: flex;
+  gap: 6px;
+}
+
 .btn-settings {
   padding: 5px 12px;
   font-size: 11px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+}
+
+.btn-settings.active {
+  border-color: var(--brass);
+  color: var(--brass);
+  background: var(--brass-dim);
 }
 
 .clock {
@@ -1124,6 +1135,24 @@ button {
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
+}
+
+/* Privacy mode: blur anything that reveals position size or net worth
+   (quantities, USD/local values, P&L) while leaving composition visible -
+   symbols, tags, allocation %, day-change % all stay readable, since the
+   point is showing what you hold and how it's divided, not hiding that. */
+.privacy .sensitive {
+  filter: blur(6px);
+  user-select: none;
+}
+
+.privacy .total-usd.sensitive,
+.privacy .total-local.sensitive {
+  filter: blur(1.2rem);
+}
+
+.privacy .sensitive:hover {
+  filter: none;
 }
 
 .error-banner {
