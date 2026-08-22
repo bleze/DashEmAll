@@ -1,11 +1,28 @@
 "use strict";
 
-const HOLDINGS_KEY = "dashemall.holdings";
-const CACHE_KEY = "dashemall.quotesCache";
-const NEWS_KEY = "dashemall.news";
-const SETTINGS_KEY = "dashemall.settings";
-const HISTORY_KEY = "dashemall.history";
-const PRIVACY_KEY = "dashemall.privacy";
+// Same coin-stack artwork as favicon.svg, minus its own background rect -
+// the header's .mark box already supplies the border/background, so only
+// the icon geometry is duplicated here (kept in sync by hand; there's no
+// build step to share an asset between an <img> and this inline markup).
+const STACK_MARK_SVG = `<svg width="17" height="17" viewBox="0 0 32 32">
+  <g stroke="#0c0b0a" stroke-width="1" stroke-linejoin="round">
+    <rect x="5.5" y="18.45" width="21" height="5.8" fill="#a9803a"/>
+    <rect x="5.5" y="12.95" width="21" height="5.8" fill="#d4b56a"/>
+    <rect x="5.5" y="7.45" width="21" height="5.8" fill="#f0d9a0"/>
+    <ellipse cx="16" cy="24.25" rx="10.5" ry="2.9" fill="#8a6c30"/>
+    <ellipse cx="16" cy="18.75" rx="10.5" ry="2.9" fill="#a9803a"/>
+    <ellipse cx="16" cy="13.25" rx="10.5" ry="2.9" fill="#d4b56a"/>
+    <ellipse cx="16" cy="7.75" rx="10.5" ry="2.9" fill="#f0d9a0"/>
+  </g>
+  <ellipse cx="16" cy="7.75" rx="6.2" ry="1.4" fill="none" stroke="#0c0b0a" stroke-width="0.7" opacity="0.55"/>
+</svg>`;
+
+const HOLDINGS_KEY = "stackemall.holdings";
+const CACHE_KEY = "stackemall.quotesCache";
+const NEWS_KEY = "stackemall.news";
+const SETTINGS_KEY = "stackemall.settings";
+const HISTORY_KEY = "stackemall.history";
+const PRIVACY_KEY = "stackemall.privacy";
 const HISTORY_MAX_DAYS = 365;
 const REFRESH_MS = 30_000;
 const NEWS_MS = 5 * 60_000;
@@ -1150,7 +1167,7 @@ function exportData() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `dashemall-export-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `stackemall-export-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -1649,7 +1666,7 @@ function render() {
   headEl.innerHTML = `
     <header class="masthead">
       <div class="brand">
-        <div class="logo"><span class="mark">D</span> DashEmAll</div>
+        <div class="logo"><span class="mark">${STACK_MARK_SVG}</span> StackEmAll</div>
         <div class="tagline">Live ledger · stocks, bitcoin, newswire</div>
       </div>
       <div class="meta">
@@ -1872,7 +1889,7 @@ async function captureScreenshot() {
     ctx.drawImage(shot, margin, margin);
     const a = document.createElement("a");
     a.href = canvas.toDataURL("image/png");
-    a.download = `dashemall-${new Date().toISOString().slice(0, 10)}.png`;
+    a.download = `stackemall-${new Date().toISOString().slice(0, 10)}.png`;
     a.click();
   } catch (err) {
     console.error("Screenshot failed", err);

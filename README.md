@@ -1,4 +1,4 @@
-# DashEmAll
+# StackEmAll
 
 A single-file, no-build portfolio ledger for stocks and crypto. Open `index.html` directly in a browser — there's no server, no bundler, and no backend. Holdings are stored in the browser's `localStorage`, so your data stays on the machine you added it on.
 

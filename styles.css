@@ -652,7 +652,10 @@ button {
    collapses to one column on a narrow viewport (same as the mobile media
    query already does) and opens up to two once there's room, without
    needing its own breakpoint. Border-top stacking doesn't divide side-by-
-   side cards, so each card gets a full border instead. */
+   side cards, so each card gets a full border instead - kept flush (no
+   grid gap) so adjacent cards' borders sit directly against each other as
+   one thin seam, the same weight as the original single-column stack,
+   rather than adding a second, wasteful gap on top of it. */
 .wire-off .holding {
   grid-template-columns: 1fr;
 }
@@ -660,7 +663,7 @@ button {
 .wire-off .holdings {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
-  gap: 12px;
+  gap: 0;
 }
 
 .wire-off .holding,
