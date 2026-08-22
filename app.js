@@ -48,7 +48,7 @@ const SORT_OPTIONS = [
   { value: "pnl", label: "P/L" },
   { value: "symbol", label: "Ticker" },
 ];
-const DEFAULT_SETTINGS = { localCurrency: "DKK", timeFormat: "auto", timezone: "auto", sortBy: "value" };
+const DEFAULT_SETTINGS = { localCurrency: "DKK", timeFormat: "auto", timezone: "auto", sortBy: "value", showWire: true };
 
 const CRYPTO = {
   "BTC-USD": { id: "bitcoin", name: "Bitcoin" },
@@ -314,6 +314,7 @@ function sanitizeSettings(saved) {
       ? saved.timezone
       : DEFAULT_SETTINGS.timezone,
     sortBy: SORT_OPTIONS.some((s) => s.value === saved.sortBy) ? saved.sortBy : DEFAULT_SETTINGS.sortBy,
+    showWire: typeof saved.showWire === "boolean" ? saved.showWire : DEFAULT_SETTINGS.showWire,
   };
 }
 
@@ -1209,6 +1210,7 @@ function renderNewsItem(item, compact) {
 }
 
 function renderTape() {
+  if (!state.settings.showWire) return "";
   const items = wireHeadlines();
   if (!items.length) return "";
   const sequence = items
@@ -1324,17 +1326,21 @@ function renderHolding(row, allocTotal, hasCost) {
           </div>
         </div>
       </button>
-      <div class="holding-news">
-        ${
-          lead
-            ? `${renderNewsItem(lead, false)}${rest.map((item) => renderNewsItem(item, true)).join("")}`
-            : row.cash
-              ? `<div class="news-empty">No wire for cash holdings.</div>`
-              : row.other
-                ? `<div class="news-empty">No wire for this holding.</div>`
-                : `<div class="news-empty">Listening for headlines…</div>`
-        }
-      </div>
+      ${
+        state.settings.showWire
+          ? `<div class="holding-news${lead ? "" : " no-wire"}">
+              ${
+                lead
+                  ? `${renderNewsItem(lead, false)}${rest.map((item) => renderNewsItem(item, true)).join("")}`
+                  : row.cash
+                    ? `<div class="news-empty">No wire for cash holdings.</div>`
+                    : row.other
+                      ? `<div class="news-empty">No wire for this holding.</div>`
+                      : `<div class="news-empty">Listening for headlines…</div>`
+              }
+            </div>`
+          : ""
+      }
     </article>
   `;
 }
@@ -1380,6 +1386,13 @@ function renderSettingsModal() {
           <select data-field="timezone">
             ${TIMEZONE_OPTIONS.map((o) => option(o, s.timezone)).join("")}
           </select>
+        </div>
+        <div class="field">
+          <label class="checkbox-field">
+            <input type="checkbox" data-field="showWire" ${s.showWire ? "checked" : ""}>
+            Show news wire
+          </label>
+          <p class="field-hint">Turns off the scrolling headline ticker and every holding's news section - for anyone who'd rather not have the noise.</p>
         </div>
         <div class="field">
           <label>Backup / transfer</label>
@@ -1625,6 +1638,7 @@ function updateTape() {
 
 function render() {
   root.classList.toggle("privacy", state.privacy);
+  root.classList.toggle("wire-off", !state.settings.showWire);
   const t = totals();
   const usdSplit = splitUsd(t.usd);
   const hasCost = state.holdings.some((h) => h.costBasis != null);
@@ -1920,6 +1934,7 @@ async function refreshQuotes() {
 }
 
 async function refreshNews() {
+  if (!state.settings.showWire) return;
   const next = { ...state.news };
   await Promise.all(
     state.holdings.map(async (holding) => {
@@ -2233,6 +2248,12 @@ root.addEventListener("change", (event) => {
     const metal = METALS.find((m) => m.symbol === event.target.value);
     state.selectedSymbol = metal.symbol;
     state.selectedName = metal.name;
+    render();
+    return;
+  }
+  if (field === "showWire") {
+    state.settings.showWire = event.target.checked;
+    persistSettings();
     render();
     return;
   }
